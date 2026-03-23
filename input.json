@@ -1,0 +1,52 @@
+{
+  "numbers" : {
+    "publications" : 100000,
+    "subscriptions" : 100000,
+    "field_weights" : {
+      "temperature" : 0.2,
+      "rain" : 0.3,
+      "city" : 1
+    },
+    "equality_weights" : {
+      "city" : 0.9,
+      "temperature":0.5
+    }
+  },
+  "structure" : {
+    "stationId" : {
+      "is_interval" : false,
+      "values" : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      "operators" : ["=", ">", "<", ">=", "<="]
+    },
+    "city" : {
+      "is_interval" : false,
+      "values" : ["Bucharest", "Rome", "London", "Berlin", "Madrid", "Budapest", "Amsterdam"],
+      "operators" : ["=", "!="]
+    },
+    "temperature" : {
+      "is_interval" : true,
+      "values" : [0, 35],
+      "operators" : ["=", ">", "<", ">=", "<="]
+    },
+    "rain" : {
+      "is_interval" : true,
+      "values" : [0, 5],
+      "operators" : ["=", ">", "<", ">=", "<="]
+    },
+    "wind" : {
+      "is_interval" : true,
+      "values" : [0, 5],
+      "operators" : ["=", ">", "<", ">=", "<="]
+    },
+    "direction" : {
+      "is_interval" : false,
+      "values" : ["N", "S", "W", "E", "NE", "NW", "SE", "SW"],
+      "operators" : ["=", "!="]
+    },
+    "date" : {
+      "is_interval" : false,
+      "values" : ["25.12.2019", "25.12.2020", "25.12.2021", "25.12.2022", "25.12.2023", "25.12.2024"],
+      "operators" : ["=", "!="]
+    }
+  }
+}

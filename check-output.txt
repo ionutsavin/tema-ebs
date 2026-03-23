@@ -1,0 +1,14 @@
+Expected Publications: 100000
+Generated Publications: 100000
+Expected subscriptions: 100000
+generated_subscriptions: 100000
+Field rain expected times : 30000
+Field rain generated times : 0
+Field city expected times : 100000
+Field city generated times : 0
+Field temperature expected times : 20000
+Field temperature generated times : 0
+Field city expected at least equality times : 90000
+Field city generated equality times : 0
+Field temperature expected at least equality times : 10000
+Field temperature generated equality times : 0

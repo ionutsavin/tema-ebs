@@ -1,14 +1,16 @@
-Expected Publications: 100000
-Generated Publications: 100000
-Expected subscriptions: 100000
-generated_subscriptions: 100000
-Field rain expected times : 30000
-Field rain generated times : 0
-Field city expected times : 100000
-Field city generated times : 0
-Field temperature expected times : 20000
-Field temperature generated times : 0
-Field city expected at least equality times : 90000
-Field city generated equality times : 0
-Field temperature expected at least equality times : 10000
-Field temperature generated equality times : 0
+Expected Publications: 200000
+Generated Publications: 200000
+Expected subscriptions: 200000
+generated_subscriptions: 200000
+Field drop expected times : 60000
+Field drop generated times : 60000 
+Field date expected times : 40000
+Field date generated times : 40000 
+Field company expected times : 180000
+Field company generated times : 180000 
+Field value expected times : 120000
+Field value generated times : 120000 
+Field variation expected times : 100000
+Field variation generated times : 100000 
+Field company expected at least  equality times : 126000
+Field company generated equality times : 152997 

@@ -24,21 +24,9 @@ dependencies {
 }
 
 application {
-    // Fully qualified main class for the Application plugin
     mainClass.set("org.example.Main")
 }
 
-tasks.named<JavaExec>("run") {
-    // Ensure the app sees input.json at the project root when running via Gradle
-    workingDir = projectDir
-    // Provide default args so `gradle run` works out of the box; override with:
-    //   gradle run --args="--threads 8"
-    args = listOf("--threads", "4")
-}
-
-// Add Main-Class to the JAR manifest so the artifact is runnable with `java -jar` when
-// dependencies are on the classpath (this is NOT a fat jar). For a single-file runnable
-// JAR including dependencies, use the Shadow plugin.
 tasks.jar {
     manifest {
         attributes(

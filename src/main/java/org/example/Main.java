@@ -1,96 +1,87 @@
 package org.example;
-import java.io.*;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.nio.file.*;
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.ReentrantLock;
-import java.util.stream.Collectors;
 
 import org.json.JSONObject;
 
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.stream.Collectors;
+
 public class Main {
 
-    // ── Config constants ──────────────────────────────────────────────────────
+    // Constants
+    private static final String INPUT_JSON = "input.json";
     private static final String PUBLICATIONS_OUTPUT_FILE = "publications.txt";
     private static final String SUBSCRIPTIONS_OUTPUT_FILE = "subscriptions.txt";
     private static final String CHECK_OUTPUT_FILE = "check-output.txt";
+    private static final int THREADS = 4;
 
-    // ── Runtime config (loaded from input.json + CLI args) ────────────────────
-    private static int NUM_THREADS;
-    private static int PUBLICATIONS;
-    private static int SUBSCRIPTIONS;
-
-    private static Map<String, Double> FIELD_WEIGHTS = new HashMap<>();
-    private static Map<String, Double> EQUALITY_WEIGHTS = new HashMap<>();
-    private static Map<String, FieldStructure> FIELD_STRUCTURE = new LinkedHashMap<>();
-
-    private static Map<String, Integer> preciseFieldNumber = new HashMap<>();
-    private static Map<String, Integer> preciseFieldEqualityNumber = new HashMap<>();
-    private static final ReentrantLock preciseFieldNumberLock = new ReentrantLock();
-    private static final ReentrantLock preciseFieldEqualityNumberLock = new ReentrantLock();
-    private static final ReentrantLock publicationFileLock = new ReentrantLock();
-
-    private static FIFOPriorityQueue<Subscription> subscriptions;
-    private static final List<List<Object[]>> subscriptionsList = new ArrayList<>();
-
-    private static final Random random = new Random();
-
-    // ── Inner data class ──────────────────────────────────────────────────────
-    static class FieldStructure {
-        boolean isInterval;
-        List<Object> values;
-        List<String> operators;
-
-        FieldStructure(boolean isInterval, List<Object> values, List<String> operators) {
-            this.isInterval = isInterval;
-            this.values = values;
-            this.operators = operators;
-        }
+    // Structures formerly in AppConfig
+        private record FieldStructure(boolean isInterval, List<Object> values, List<String> operators) {
     }
 
-    // ── Entry point ───────────────────────────────────────────────────────────
+    private record ThreadSlice(int publicationsCount, int subscriptionsCount, Map<String, Integer> fieldQuotas,
+                               Map<String, Integer> equalityQuotas) {
+    }
+
+    private static final class Config {
+        int numThreads;
+        int publications;
+        int subscriptions;
+        final Map<String, Double> fieldWeights = new LinkedHashMap<>();
+        final Map<String, Double> equalityWeights = new LinkedHashMap<>();
+        final Map<String, FieldStructure> fieldStructure = new LinkedHashMap<>();
+        final Map<String, Integer> preciseFieldNumber = new LinkedHashMap<>();
+        final Map<String, Integer> preciseEqualityNumber = new LinkedHashMap<>();
+    }
+
+    // ---- Entry point ----
     public static void main(String[] args) throws Exception {
-        // Parse CLI arguments
-        NUM_THREADS = parseCLIArgs(args);
+        Config config = loadConfig();
 
-        // Load config
-        String content = Files.readString(Path.of("input.json"));
-        JSONObject config = new JSONObject(content);
-        JSONObject numbers = config.getJSONObject("numbers");
-        JSONObject structure = config.getJSONObject("structure");
+        // Generate publications
+        long pStart = System.nanoTime();
+        List<String> pubs = generateAllPublications(config);
+        writeLines(Path.of(PUBLICATIONS_OUTPUT_FILE), pubs);
+        double pSec = (System.nanoTime() - pStart) / 1e9;
+        System.out.printf("\nExecution time for generating publications: %.4f seconds%n", pSec);
 
-        PUBLICATIONS = numbers.getInt("publications");
-        SUBSCRIPTIONS = numbers.getInt("subscriptions");
+        // Generate subscriptions
+        long sStart = System.nanoTime();
+        List<Subscription> subs = generateAllSubscriptions(config);
+        List<String> subsStr = subscriptionsToStrings(subs);
+        writeLines(Path.of(SUBSCRIPTIONS_OUTPUT_FILE), subsStr);
+        double sSec = (System.nanoTime() - sStart) / 1e9;
+        System.out.printf("\nExecution time for generating subscriptions: %.4f seconds%n", sSec);
 
-        // Field weights
+        // Validate output
+        checkOutput(config, Path.of(PUBLICATIONS_OUTPUT_FILE), Path.of(SUBSCRIPTIONS_OUTPUT_FILE), Path.of(CHECK_OUTPUT_FILE));
+    }
+
+    // ---- Config loading (JSON) ----
+    private static Config loadConfig() throws IOException {
+        Config config = new Config();
+        config.numThreads = Main.THREADS;
+
+        String content = Files.readString(Path.of(INPUT_JSON));
+        JSONObject json = new JSONObject(content);
+        JSONObject numbers = json.getJSONObject("numbers");
+        JSONObject structure = json.getJSONObject("structure");
+
+        config.publications = numbers.getInt("publications");
+        config.subscriptions = numbers.getInt("subscriptions");
+
         if (numbers.has("field_weights")) {
             JSONObject fw = numbers.getJSONObject("field_weights");
-            for (String key : fw.keySet()) FIELD_WEIGHTS.put(key, fw.getDouble(key));
+            for (String key : fw.keySet()) config.fieldWeights.put(key, fw.getDouble(key));
         }
-
-        // Equality weights
         if (numbers.has("equality_weights")) {
             JSONObject ew = numbers.getJSONObject("equality_weights");
-            for (String key : ew.keySet()) EQUALITY_WEIGHTS.put(key, ew.getDouble(key));
+            for (String key : ew.keySet()) config.equalityWeights.put(key, ew.getDouble(key));
         }
 
-        // Precise field numbers
-        for (String field : FIELD_WEIGHTS.keySet()) {
-            int count = (int) Math.round(SUBSCRIPTIONS * FIELD_WEIGHTS.get(field));
-            if (count > 0) preciseFieldNumber.put(field, count);
-        }
-
-        // Precise equality numbers
-        for (String field : EQUALITY_WEIGHTS.keySet()) {
-            if (!preciseFieldNumber.containsKey(field)) continue;
-            int count = (int) Math.ceil(preciseFieldNumber.get(field) * EQUALITY_WEIGHTS.get(field));
-            preciseFieldEqualityNumber.put(field, count);
-        }
-
-        // Field structure
         for (String field : structure.keySet()) {
             JSONObject details = structure.getJSONObject(field);
             boolean isInterval = details.getBoolean("is_interval");
@@ -101,266 +92,296 @@ public class Main {
             List<String> operators = new ArrayList<>();
             for (Object op : details.getJSONArray("operators")) operators.add(op.toString());
 
-            FIELD_STRUCTURE.put(field, new FieldStructure(isInterval, values, operators));
+            config.fieldStructure.put(field, new FieldStructure(isInterval, values, operators));
         }
 
-        subscriptions = new FIFOPriorityQueue<>();
-
-        generatePublications();
-        generateSubscriptions();
-        checkOutput();
-    }
-
-    // ── CLI parsing ───────────────────────────────────────────────────────────
-    private static int parseCLIArgs(String[] args) {
-        for (int i = 0; i < args.length - 1; i++) {
-            if (args[i].equals("--threads")) return Integer.parseInt(args[i + 1]);
+        // compute global precise integer quotas
+        for (String field : config.fieldWeights.keySet()) {
+            int count = (int) Math.round(config.subscriptions * config.fieldWeights.get(field));
+            if (count > 0) config.preciseFieldNumber.put(field, count);
         }
-        throw new IllegalArgumentException("--threads argument is required");
+        for (String field : config.equalityWeights.keySet()) {
+            if (!config.preciseFieldNumber.containsKey(field)) continue;
+            int count = (int) Math.ceil(config.preciseFieldNumber.get(field) * config.equalityWeights.get(field));
+            config.preciseEqualityNumber.put(field, count);
+        }
+
+        return config;
     }
 
-    // ── Random value generation ───────────────────────────────────────────────
-    private static Object generateRandomValueForField(String fieldName) {
-        FieldStructure fs = FIELD_STRUCTURE.get(fieldName);
+    // ---- Thread slicing ----
+    private static List<ThreadSlice> sliceForThreads(Config config) {
+        int T = config.numThreads;
+        List<ThreadSlice> slices = new ArrayList<>(T);
+
+        int pubsPer = config.publications / T;
+        int pubsRem = config.publications % T;
+        int subsPer = config.subscriptions / T;
+        int subsRem = config.subscriptions % T;
+
+        List<Map<String, Integer>> fieldMaps = new ArrayList<>(T);
+        List<Map<String, Integer>> eqMaps = new ArrayList<>(T);
+        for (int i = 0; i < T; i++) {
+            fieldMaps.add(new LinkedHashMap<>());
+            eqMaps.add(new LinkedHashMap<>());
+            for (String k : config.preciseFieldNumber.keySet()) fieldMaps.get(i).put(k, 0);
+            for (String k : config.preciseEqualityNumber.keySet()) eqMaps.get(i).put(k, 0);
+        }
+
+        for (Map.Entry<String, Integer> e : config.preciseFieldNumber.entrySet()) {
+            String k = e.getKey();
+            int total = e.getValue();
+            int base = total / T;
+            int rem = total % T;
+            for (int i = 0; i < T; i++) {
+                fieldMaps.get(i).put(k, fieldMaps.get(i).get(k) + base + (i < rem ? 1 : 0));
+            }
+        }
+        for (Map.Entry<String, Integer> e : config.preciseEqualityNumber.entrySet()) {
+            String k = e.getKey();
+            int total = e.getValue();
+            int base = total / T;
+            int rem = total % T;
+            for (int i = 0; i < T; i++) {
+                eqMaps.get(i).put(k, eqMaps.get(i).get(k) + base + (i < rem ? 1 : 0));
+            }
+        }
+
+        for (int i = 0; i < T; i++) {
+            int pubs = pubsPer + (i < pubsRem ? 1 : 0);
+            int subs = subsPer + (i < subsRem ? 1 : 0);
+            slices.add(new ThreadSlice(pubs, subs, fieldMaps.get(i), eqMaps.get(i)));
+        }
+        return slices;
+    }
+
+    // ---- Random value generation ----
+    private static Object randomValueForField(Config config, String field, Random random) {
+        FieldStructure fs = config.fieldStructure.get(field);
+        if (fs == null) throw new IllegalArgumentException("Unknown field: " + field);
+
         if (fs.isInterval) {
-            Object lo = fs.values.get(0);
-            Object hi = fs.values.get(1);
-            if (fieldName.equals("rain")) {
-                double low = ((Number) lo).doubleValue();
-                double high = ((Number) hi).doubleValue();
-                return low + (high - low) * random.nextDouble();
-            } else {
-                int low = ((Number) lo).intValue();
-                int high = ((Number) hi).intValue();
-                return low + random.nextInt(high - low + 1);
-            }
+            double low = ((Number) fs.values.get(0)).doubleValue();
+            double high = ((Number) fs.values.get(1)).doubleValue();
+
+            double result = low + (high - low) * random.nextDouble();
+
+            return Math.round(result * 100.0) / 100.0;
         } else {
-            return fs.values.get(random.nextInt(fs.values.size()));
+            List<Object> vals = fs.values;
+            return vals.get(random.nextInt(vals.size()));
         }
     }
 
-    // ── Publication generation ────────────────────────────────────────────────
-    private static void generatePublication(int numPublications) {
-        List<List<Map<String, Object>>> bulk = new ArrayList<>();
-        for (int i = 0; i < numPublications; i++) {
-            List<Map<String, Object>> pub = new ArrayList<>();
-            for (String fieldName : FIELD_STRUCTURE.keySet()) {
-                Map<String, Object> entry = new HashMap<>();
-                entry.put(fieldName, generateRandomValueForField(fieldName));
-                pub.add(entry);
+    // ---- Publications generation ----
+    private static List<String> generatePublicationsForSlice(Config config, ThreadSlice slice, Random rnd) {
+        List<String> lines = new ArrayList<>(slice.publicationsCount);
+        List<String> fields = new ArrayList<>(config.fieldStructure.keySet());
+        for (int i = 0; i < slice.publicationsCount; i++) {
+            Publication pub = new Publication();
+            for (String f : fields) {
+                pub.put(f, randomValueForField(config, f, rnd));
             }
-            bulk.add(pub);
+            lines.add(pub.toString());
         }
-        writeOutput(bulk.stream().map(Object::toString).collect(Collectors.toList()),
-                PUBLICATIONS_OUTPUT_FILE, "a");
+        return lines;
     }
 
-    private static void generatePublications() throws Exception {
-        long start = System.nanoTime();
-
-        try { Files.deleteIfExists(Path.of(PUBLICATIONS_OUTPUT_FILE)); } catch (IOException ignored) {}
-
-        int perTask = PUBLICATIONS / NUM_THREADS;
-        int remainder = PUBLICATIONS % NUM_THREADS;
-
-        ExecutorService executor = Executors.newFixedThreadPool(NUM_THREADS);
+    private static List<String> generateAllPublications(Config config) {
+        List<ThreadSlice> slices = sliceForThreads(config);
+        ExecutorService es = Executors.newFixedThreadPool(config.numThreads);
         try {
-            List<Future<?>> futures = new ArrayList<>();
-            for (int i = 0; i < NUM_THREADS; i++) {
-                int count = (i == NUM_THREADS - 1) ? perTask + remainder : perTask;
-                futures.add(executor.submit(() -> generatePublication(count)));
+            List<Future<List<String>>> futures = new ArrayList<>();
+            for (ThreadSlice s : slices) {
+                futures.add(es.submit(() -> generatePublicationsForSlice(config, s, new Random())));
             }
-            for (Future<?> f : futures) f.get(); // wait for all
+            List<String> all = new ArrayList<>(config.publications);
+            for (Future<List<String>> f : futures) {
+                try { all.addAll(f.get()); } catch (Exception e) { throw new RuntimeException(e); }
+            }
+            return all;
         } finally {
-            executor.shutdown();
-            try {
-                if (!executor.awaitTermination(1, TimeUnit.MINUTES)) {
-                    executor.shutdownNow();
-                }
-            } catch (InterruptedException ie) {
-                executor.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
-        }
-
-        double elapsed = (System.nanoTime() - start) / 1e9;
-        System.out.printf("%nExecution time for generating publications: %.4f seconds%n", elapsed);
-    }
-
-    // ── Subscription generation ───────────────────────────────────────────────
-    private static void addFieldToSubscription(int batchSize) {
-        for (int i = 0; i < batchSize; i++) {
-            Subscription current = subscriptions.pop();
-
-            String minField;
-            preciseFieldNumberLock.lock();
-            try {
-                Set<String> availableFields = new HashSet<>(preciseFieldNumber.keySet());
-                availableFields.removeAll(current.getUsedFields());
-
-                minField = availableFields.stream()
-                        .min(Comparator.comparingInt(preciseFieldNumber::get))
-                        .orElseThrow();
-
-                if (preciseFieldNumber.get(minField) == 1) {
-                    preciseFieldNumber.remove(minField);
-                } else {
-                    preciseFieldNumber.merge(minField, -1, Integer::sum);
-                }
-            } finally {
-                preciseFieldNumberLock.unlock();
-            }
-
-            String operator;
-            preciseFieldEqualityNumberLock.lock();
-            try {
-                if (preciseFieldEqualityNumber.containsKey(minField)) {
-                    operator = "=";
-                    if (preciseFieldEqualityNumber.get(minField) == 1) {
-                        preciseFieldEqualityNumber.remove(minField);
-                    } else {
-                        preciseFieldEqualityNumber.merge(minField, -1, Integer::sum);
-                    }
-                } else {
-                    List<String> ops = FIELD_STRUCTURE.get(minField).operators;
-                    operator = ops.get(random.nextInt(ops.size()));
-                }
-            } finally {
-                preciseFieldEqualityNumberLock.unlock();
-            }
-
-            current.addValue(minField, operator, generateRandomValueForField(minField));
-            subscriptions.push(current, current.getLength());
+            es.shutdownNow();
         }
     }
 
-    private static void generateSubscriptions() throws Exception {
-        long start = System.nanoTime();
+    // ---- Subscriptions generation ----
+    private static String chooseOperator(Config config, String field, Map<String, Integer> equalityLeft, Random rnd) {
+        int left = equalityLeft.getOrDefault(field, 0);
+        List<String> ops = config.fieldStructure.get(field).operators;
+        if (left > 0 && ops.contains("=")) {
+            equalityLeft.put(field, left - 1);
+            return "=";
+        }
+        return ops.get(rnd.nextInt(ops.size()));
+    }
 
-        for (int i = 0; i < SUBSCRIPTIONS; i++) {
-            subscriptions.push(new Subscription(), 0);
+    private static List<Subscription> generateSubscriptionsForSlice(Config config, ThreadSlice slice, Random rnd) {
+        int subsCount = slice.subscriptionsCount;
+        List<Subscription> list = new ArrayList<>(subsCount);
+        for (int i = 0; i < subsCount; i++) list.add(new Subscription());
+
+        Map<String, Integer> quotas = new LinkedHashMap<>(slice.fieldQuotas);
+        Map<String, Integer> eqLeft = new LinkedHashMap<>(slice.equalityQuotas);
+
+        PriorityQueue<Integer> pq = new PriorityQueue<>(Comparator.comparingInt(i -> list.get(i).size()));
+        for (int i = 0; i < subsCount; i++) pq.offer(i);
+
+        int totalLeft = quotas.values().stream().mapToInt(Integer::intValue).sum();
+        int guard = Math.max(1, totalLeft) * 4;
+
+        while (totalLeft > 0 && guard-- > 0) {
+            Integer idx = pq.poll();
+            if (idx == null) break;
+            Subscription sub = list.get(idx);
+
+            String bestField = null;
+            int bestCount = Integer.MAX_VALUE;
+            Set<String> used = sub.getUsedFields();
+            for (Map.Entry<String, Integer> e : quotas.entrySet()) {
+                int c = e.getValue();
+                if (c <= 0) continue;
+                String f = e.getKey();
+                if (!used.contains(f) && c < bestCount) {
+                    bestCount = c;
+                    bestField = f;
+                }
+            }
+            if (bestField == null) {
+                for (Map.Entry<String, Integer> e : quotas.entrySet()) {
+                    if (e.getValue() > 0) { bestField = e.getKey(); break; }
+                }
+                if (bestField == null) {
+                    pq.offer(idx);
+                    break;
+                }
+            }
+
+            String op = chooseOperator(config, bestField, eqLeft, rnd);
+            Object val = randomValueForField(config, bestField, rnd);
+            sub.addConstraint(bestField, op, val);
+
+            quotas.put(bestField, quotas.get(bestField) - 1);
+            totalLeft--;
+
+            pq.offer(idx);
         }
 
-        int totalFields = preciseFieldNumber.values().stream().mapToInt(Integer::intValue).sum();
-        int perTask = totalFields / NUM_THREADS;
-        int remainder = totalFields % NUM_THREADS;
+        return list;
+    }
 
-        ExecutorService executor = Executors.newFixedThreadPool(NUM_THREADS);
+    private static List<Subscription> generateAllSubscriptions(Config config) {
+        List<ThreadSlice> slices = sliceForThreads(config);
+        ExecutorService es = Executors.newFixedThreadPool(config.numThreads);
         try {
-            List<Future<?>> futures = new ArrayList<>();
-            for (int i = 0; i < NUM_THREADS; i++) {
-                int count = (i == NUM_THREADS - 1) ? perTask + remainder : perTask;
-                futures.add(executor.submit(() -> addFieldToSubscription(count)));
+            List<Future<List<Subscription>>> futures = new ArrayList<>();
+            for (ThreadSlice s : slices) {
+                futures.add(es.submit(() -> generateSubscriptionsForSlice(config, s, new Random())));
             }
-            for (Future<?> f : futures) {
-                try {
-                    f.get();
-                } catch (ExecutionException e) {
-                    System.err.println("Exception in thread: " + e.getCause());
-                }
+            List<Subscription> all = new ArrayList<>(config.subscriptions);
+            for (Future<List<Subscription>> f : futures) {
+                try { all.addAll(f.get()); } catch (Exception e) { throw new RuntimeException(e); }
             }
+            return all;
         } finally {
-            executor.shutdown();
-            try {
-                if (!executor.awaitTermination(1, TimeUnit.MINUTES)) {
-                    executor.shutdownNow();
-                }
-            } catch (InterruptedException ie) {
-                executor.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
+            es.shutdownNow();
         }
-
-        while (!subscriptions.isEmpty()) {
-            subscriptionsList.add(subscriptions.pop().getValues());
-        }
-
-        writeOutput(
-                subscriptionsList.stream().map(Object::toString).collect(Collectors.toList()),
-                SUBSCRIPTIONS_OUTPUT_FILE, "w");
-
-        double elapsed = (System.nanoTime() - start) / 1e9;
-        System.out.printf("%nExecution time for generating subscriptions: %.4f seconds%n", elapsed);
     }
 
-    // ── File I/O ──────────────────────────────────────────────────────────────
-    private static void writeOutput(List<String> messages, String filePath, String mode) {
-        boolean append = mode.equals("a");
+    // ---- Utils ----
+    private static List<String> subscriptionsToStrings(List<Subscription> subs) {
+        return subs.stream().map(Subscription::toString).collect(Collectors.toList());
+    }
 
-        if (filePath.equals(PUBLICATIONS_OUTPUT_FILE)) {
-            publicationFileLock.lock();
-            try (BufferedWriter writer = new BufferedWriter(
-                    new FileWriter(filePath, append))) {
-                for (String msg : messages) writer.write(msg + "\n");
-            } catch (IOException e) {
-                System.err.println("Error writing to file " + filePath + ": " + e.getMessage());
-            } finally {
-                publicationFileLock.unlock();
-            }
-        } else {
-            try (BufferedWriter writer = new BufferedWriter(
-                    new FileWriter(filePath, append))) {
-                for (String msg : messages) writer.write(msg + "\n");
-            } catch (IOException e) {
-                System.err.println("Error writing to file " + filePath + ": " + e.getMessage());
+    private static void writeLines(Path path, List<String> lines) throws IOException {
+        try (BufferedWriter bw = new BufferedWriter(new FileWriter(path.toFile(), false))) {
+            for (String s : lines) {
+                bw.write(s);
+                bw.newLine();
             }
         }
     }
 
-    // ── Output verification ───────────────────────────────────────────────────
-    private static void checkOutput() throws IOException {
-        // Re-derive expected counts
-        Map<String, Integer> expectedFieldNumber = new HashMap<>();
-        Map<String, Integer> expectedEqualityNumber = new HashMap<>();
+    // ---- Validation ----
+    private static long safeCountLines(Path path) {
+        if (path == null) return 0L;
+        if (!Files.exists(path)) return 0L;
+        try (var lines = Files.lines(path)) {
+            return lines.count();
+        } catch (IOException e) {
+            return 0L;
+        }
+    }
 
-        for (String field : FIELD_WEIGHTS.keySet())
-            expectedFieldNumber.put(field, (int) Math.round(SUBSCRIPTIONS * FIELD_WEIGHTS.get(field)));
-        for (String field : EQUALITY_WEIGHTS.keySet())
-            expectedEqualityNumber.put(field,
-                    (int) Math.ceil(expectedFieldNumber.get(field) * EQUALITY_WEIGHTS.get(field)));
+    private static void accumulate(Map<String, Long> map, String key) {
+        if (key == null) return;
+        map.put(key, map.getOrDefault(key, 0L) + 1L);
+    }
 
-        // Count publications
-        long generatedPublications = Files.lines(Path.of(PUBLICATIONS_OUTPUT_FILE)).count();
-
-        // Count subscriptions and field occurrences
-        Map<String, Integer> restrictedFields = new HashMap<>();
-        Map<String, Integer> restrictedEqualityFields = new HashMap<>();
-        for (String k : expectedFieldNumber.keySet()) restrictedFields.put(k, 0);
-        for (String k : expectedEqualityNumber.keySet()) restrictedEqualityFields.put(k, 0);
-
-        long generatedSubscriptions = 0;
-        try (BufferedReader reader = new BufferedReader(new FileReader(SUBSCRIPTIONS_OUTPUT_FILE))) {
+    private static void countSubscriptions(Path subsPath, Map<String, Long> fieldCounts, Map<String, Long> equalityCounts) {
+        fieldCounts.clear();
+        equalityCounts.clear();
+        if (subsPath == null || !Files.exists(subsPath)) return;
+        try (BufferedReader br = new BufferedReader(new FileReader(subsPath.toFile()))) {
             String line;
-            while ((line = reader.readLine()) != null) {
-                generatedSubscriptions++;
-                // Simple parse: extract (field, operator, value) tuples from the toString format
-                // Expected format: [[field, op, val], [field, op, val], ...]
-                String[] tokens = line.replaceAll("[\\[\\]()']", "").split(",\\s*");
-                for (int i = 0; i + 2 < tokens.length; i += 3) {
-                    String key = tokens[i].trim();
-                    String op = tokens[i + 1].trim();
-                    if (restrictedFields.containsKey(key))
-                        restrictedFields.merge(key, 1, Integer::sum);
-                    if (restrictedEqualityFields.containsKey(key) && op.equals("="))
-                        restrictedEqualityFields.merge(key, 1, Integer::sum);
+            while ((line = br.readLine()) != null) {
+                int from = 0;
+                while (true) {
+                    int l = line.indexOf('(', from);
+                    if (l < 0) break;
+                    int c1 = line.indexOf(',', l + 1);
+                    if (c1 < 0) break;
+                    String field = line.substring(l + 1, c1);
+                    int c2 = line.indexOf(',', c1 + 1);
+                    if (c2 < 0) break;
+                    String op = line.substring(c1 + 1, c2);
+                    accumulate(fieldCounts, field);
+                    if ("=".equals(op)) accumulate(equalityCounts, field);
+                    int r = line.indexOf(')', c2 + 1);
+                    if (r < 0) break;
+                    from = r + 1;
                 }
             }
+        } catch (IOException e) {
+            // ignore individual line errors; leave counts as-is
         }
+    }
 
-        // Write report
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(CHECK_OUTPUT_FILE))) {
-            writer.write("Expected Publications: " + PUBLICATIONS + "\n");
-            writer.write("Generated Publications: " + generatedPublications + "\n");
-            writer.write("Expected subscriptions: " + SUBSCRIPTIONS + "\n");
-            writer.write("generated_subscriptions: " + generatedSubscriptions + "\n");
-            for (String key : restrictedFields.keySet()) {
-                writer.write("Field " + key + " expected times : " + expectedFieldNumber.get(key) + "\n");
-                writer.write("Field " + key + " generated times : " + restrictedFields.get(key) + "\n");
+    private static void checkOutput(Config config, Path pubsPath, Path subsPath, Path reportPath) {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(reportPath.toFile()))) {
+            long pubs = safeCountLines(pubsPath);
+            long subs = safeCountLines(subsPath);
+
+            // Header similar to the requested format
+            writer.write("Expected Publications: " + config.publications + "\n");
+            writer.write("Generated Publications: " + pubs + "\n");
+            writer.write("Expected subscriptions: " + config.subscriptions + "\n");
+            writer.write("generated_subscriptions: " + subs + "\n");
+
+            // Count generated occurrences per field and equality usages
+            Map<String, Long> genFieldCounts = new LinkedHashMap<>();
+            Map<String, Long> genEqCounts = new LinkedHashMap<>();
+            countSubscriptions(subsPath, genFieldCounts, genEqCounts);
+
+            // Per-field totals (expected vs generated)
+            for (Map.Entry<String, Integer> e : config.preciseFieldNumber.entrySet()) {
+                String field = e.getKey();
+                long expected = e.getValue();
+                long generated = genFieldCounts.getOrDefault(field, 0L);
+                writer.write("Field " + field + " expected times : " + expected + "\n");
+                writer.write("Field " + field + " generated times : " + generated + " \n");
             }
-            for (String key : restrictedEqualityFields.keySet()) {
-                writer.write("Field " + key + " expected at least equality times : " + expectedEqualityNumber.get(key) + "\n");
-                writer.write("Field " + key + " generated equality times : " + restrictedEqualityFields.get(key) + "\n");
+
+            // Equality counts (expected at least vs generated)
+            for (Map.Entry<String, Integer> e : config.preciseEqualityNumber.entrySet()) {
+                String field = e.getKey();
+                long expectedAtLeast = e.getValue();
+                long generatedEq = genEqCounts.getOrDefault(field, 0L);
+                writer.write("Field " + field + " expected at least  equality times : " + expectedAtLeast + "\n");
+                writer.write("Field " + field + " generated equality times : " + generatedEq + " \n");
             }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
     }
 }

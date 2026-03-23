@@ -1,47 +1,43 @@
 package org.example;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+
+import java.util.*;
+import java.util.StringJoiner;
+
 
 public class Subscription implements Comparable<Subscription> {
 
-    private final List<Object[]> values;
+    public record Constraint(String field, String operator, Object value) {
+    }
+
+    private final List<Constraint> constraints;
 
     public Subscription() {
-        this.values = new ArrayList<>();
+        this.constraints = new ArrayList<>();
     }
 
-    public void addValue(Object field, Object operator, Object value) {
-        this.values.add(new Object[]{field, operator, value});
+    public void addConstraint(String field, String operator, Object value) {
+        this.constraints.add(new Constraint(field, operator, value));
     }
 
-    public int getLength() {
-        return values.size();
-    }
+    public int size() { return constraints.size(); }
 
-    public Set<Object> getUsedFields() {
-        Set<Object> fields = new HashSet<>();
-        for (Object[] value : values) {
-            fields.add(value[0]);
-        }
+    public Set<String> getUsedFields() {
+        Set<String> fields = new HashSet<>();
+        for (Constraint c : constraints) fields.add(c.field);
         return fields;
-    }
-
-    public List<Object[]> getValues() {
-        return values;
     }
 
     @Override
     public int compareTo(Subscription other) {
-        return Integer.compare(this.getLength(), other.getLength());
+        return Integer.compare(this.size(), other.size());
     }
 
-    public boolean isGreaterThan(Subscription other) {
-        return this.getLength() > other.getLength();
-    }
-
-    public boolean isLessThan(Subscription other) {
-        return this.getLength() < other.getLength();
+    @Override
+    public String toString() {
+        StringJoiner joiner = new StringJoiner(";", "{", "}");
+        for (Constraint c : constraints) {
+            joiner.add("(" + c.field + "," + c.operator + "," + Publication.stringify(c.value) + ")");
+        }
+        return joiner.toString();
     }
 }

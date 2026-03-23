@@ -1,52 +1,43 @@
 {
-  "numbers" : {
-    "publications" : 100000,
-    "subscriptions" : 100000,
-    "field_weights" : {
-      "temperature" : 0.2,
-      "rain" : 0.3,
-      "city" : 1
+  "numbers": {
+    "publications": 200000,
+    "subscriptions": 200000,
+    "field_weights": {
+      "company": 0.9,
+      "value": 0.6,
+      "drop": 0.3,
+      "variation": 0.5,
+      "date": 0.2
     },
-    "equality_weights" : {
-      "city" : 0.9,
-      "temperature":0.5
+    "equality_weights": {
+      "company": 0.7
     }
   },
-  "structure" : {
-    "stationId" : {
-      "is_interval" : false,
-      "values" : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-      "operators" : ["=", ">", "<", ">=", "<="]
+  "structure": {
+    "company": {
+      "is_interval": false,
+      "values": ["Google", "Apple", "Microsoft", "Amazon", "Meta"],
+      "operators": ["=", "!="]
     },
-    "city" : {
-      "is_interval" : false,
-      "values" : ["Bucharest", "Rome", "London", "Berlin", "Madrid", "Budapest", "Amsterdam"],
-      "operators" : ["=", "!="]
+    "value": {
+      "is_interval": true,
+      "values": [10.0, 1000.0],
+      "operators": ["=", ">", "<", ">=", "<="]
     },
-    "temperature" : {
-      "is_interval" : true,
-      "values" : [0, 35],
-      "operators" : ["=", ">", "<", ">=", "<="]
+    "drop": {
+      "is_interval": true,
+      "values": [0.0, 25.0],
+      "operators": ["=", ">", "<", ">=", "<="]
     },
-    "rain" : {
-      "is_interval" : true,
-      "values" : [0, 5],
-      "operators" : ["=", ">", "<", ">=", "<="]
+    "variation": {
+      "is_interval": true,
+      "values": [0.1, 0.99],
+      "operators": ["=", ">", "<", ">=", "<="]
     },
-    "wind" : {
-      "is_interval" : true,
-      "values" : [0, 5],
-      "operators" : ["=", ">", "<", ">=", "<="]
-    },
-    "direction" : {
-      "is_interval" : false,
-      "values" : ["N", "S", "W", "E", "NE", "NW", "SE", "SW"],
-      "operators" : ["=", "!="]
-    },
-    "date" : {
-      "is_interval" : false,
-      "values" : ["25.12.2019", "25.12.2020", "25.12.2021", "25.12.2022", "25.12.2023", "25.12.2024"],
-      "operators" : ["=", "!="]
+    "date": {
+      "is_interval": false,
+      "values": ["1.02.2022", "2.02.2022", "3.02.2022", "4.02.2022", "5.02.2022"],
+      "operators": ["=", ">", "<", ">=", "<="]
     }
   }
 }

@@ -2,40 +2,40 @@
   "numbers": {
     "publications": 200000,
     "subscriptions": 200000,
-    "field_weights": {
+    "fieldWeights": {
       "company": 0.9,
       "value": 0.6,
       "drop": 0.3,
       "variation": 0.5,
       "date": 0.2
     },
-    "equality_weights": {
+    "equalityWeights": {
       "company": 0.7
     }
   },
   "structure": {
     "company": {
-      "is_interval": false,
+      "isInterval": false,
       "values": ["Google", "Apple", "Microsoft", "Amazon", "Meta"],
       "operators": ["=", "!="]
     },
     "value": {
-      "is_interval": true,
+      "isInterval": true,
       "values": [10.0, 1000.0],
       "operators": ["=", ">", "<", ">=", "<="]
     },
     "drop": {
-      "is_interval": true,
+      "isInterval": true,
       "values": [0.0, 25.0],
       "operators": ["=", ">", "<", ">=", "<="]
     },
     "variation": {
-      "is_interval": true,
+      "isInterval": true,
       "values": [0.1, 0.99],
       "operators": ["=", ">", "<", ">=", "<="]
     },
     "date": {
-      "is_interval": false,
+      "isInterval": false,
       "values": ["1.02.2022", "2.02.2022", "3.02.2022", "4.02.2022", "5.02.2022"],
       "operators": ["=", ">", "<", ">=", "<="]
     }

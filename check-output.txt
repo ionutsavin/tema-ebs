@@ -13,4 +13,12 @@ Field value generated times : 120000
 Field variation expected times : 100000
 Field variation generated times : 100000 
 Field company expected at least  equality times : 126000
-Field company generated equality times : 152997 
+Field company generated equality times : 152955 
+
+=== SUBSCRIPTION BALANCE CHECK ===
+
+Constraints per subscription:
+  Min: 2
+  Max: 3
+  Avg: 2.50
+  StdDev: 0.50

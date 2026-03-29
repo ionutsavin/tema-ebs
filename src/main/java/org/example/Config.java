@@ -42,30 +42,14 @@ public class Config {
     @Getter
     private final Map<String, Integer> preciseEqualityNumber = new LinkedHashMap<>();
 
-    private static final String DEFAULT_INPUT_JSON = "input.json";
-
-    private String inputFile;
-
-    public Config() {
-        this.inputFile = DEFAULT_INPUT_JSON;
-    }
-
-    public Config(String inputFile) {
-        this.inputFile = inputFile;
-    }
-
-    public static Config fromJson(String inputFile) throws IOException {
-        Config config = new Config(inputFile);
-        config.load();
+    public static Config fromJson(Path inputFile) throws IOException {
+        Config config = new Config();
+        config.load(inputFile);
         return config;
     }
 
-    public static Config fromJson() throws IOException {
-        return fromJson(DEFAULT_INPUT_JSON);
-    }
-
-    private void load() throws IOException {
-        String content = Files.readString(Path.of(inputFile));
+    private void load(Path inputFile) throws IOException {
+        String content = Files.readString(inputFile);
         JSONObject json = new JSONObject(content);
         JSONObject numbers = json.getJSONObject("numbers");
         JSONObject structure = json.getJSONObject("structure");
@@ -114,7 +98,8 @@ public class Config {
             }
         }
         for (String field : this.equalityWeights.keySet()) {
-            if (!this.preciseFieldNumber.containsKey(field)) continue;
+            if (!this.preciseFieldNumber.containsKey(field))
+                continue;
             int count = (int) Math.ceil(this.preciseFieldNumber.get(field) * this.equalityWeights.get(field));
             this.preciseEqualityNumber.put(field, count);
         }

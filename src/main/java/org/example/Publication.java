@@ -10,7 +10,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.Random;
 
-
 public class Publication {
     private final LinkedHashMap<String, Object> values = new LinkedHashMap<>();
 
@@ -28,8 +27,10 @@ public class Publication {
     }
 
     static String stringify(Object v) {
-        if (v == null) return "null";
-        if (v instanceof Number || v instanceof Boolean) return String.valueOf(v);
+        if (v == null)
+            return "null";
+        if (v instanceof Number || v instanceof Boolean)
+            return String.valueOf(v);
         String s = String.valueOf(v);
         return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
@@ -50,6 +51,7 @@ public class Publication {
     public static List<String> generateAll(Config config) {
         List<ThreadSlice> slices = ThreadSlice.fromConfig(config);
         ExecutorService es = Executors.newFixedThreadPool(config.getNumThreads());
+        long start = System.nanoTime();
         try {
             List<Future<List<String>>> futures = new ArrayList<>();
             for (ThreadSlice s : slices) {
@@ -57,8 +59,14 @@ public class Publication {
             }
             List<String> all = new ArrayList<>(config.getPublications());
             for (Future<List<String>> f : futures) {
-                try { all.addAll(f.get()); } catch (Exception e) { throw new RuntimeException(e); }
+                try {
+                    all.addAll(f.get());
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
             }
+            long end = System.nanoTime();
+            System.out.printf("Execution time for generating publications: %.4f seconds%n", (end - start) / 1e9);
             return all;
         } finally {
             es.shutdownNow();

@@ -13,10 +13,6 @@ public class Main {
     private static final String SUBSCRIPTIONS_OUTPUT_FILE = "subscriptions.txt";
     private static final String CHECK_OUTPUT_FILE = "check-output.txt";
 
-    private record ThreadSlice(int publicationsCount, int subscriptionsCount, Map<String, Integer> fieldQuotas,
-                               Map<String, Integer> equalityQuotas) {
-    }
-
     public static void main(String[] args) throws Exception {
         Config config = Config.fromJson();
 
@@ -39,52 +35,6 @@ public class Main {
         checkOutput(config, Path.of(PUBLICATIONS_OUTPUT_FILE), Path.of(SUBSCRIPTIONS_OUTPUT_FILE), Path.of(CHECK_OUTPUT_FILE));
     }
 
-    // ---- Thread slicing ----
-    private static List<ThreadSlice> sliceForThreads(Config config) {
-        int T = config.getNumThreads();
-        List<ThreadSlice> slices = new ArrayList<>(T);
-
-        int pubsPer = config.getPublications() / T;
-        int pubsRem = config.getPublications() % T;
-        int subsPer = config.getSubscriptions() / T;
-        int subsRem = config.getSubscriptions() % T;
-
-        List<Map<String, Integer>> fieldMaps = new ArrayList<>(T);
-        List<Map<String, Integer>> eqMaps = new ArrayList<>(T);
-        for (int i = 0; i < T; i++) {
-            fieldMaps.add(new LinkedHashMap<>());
-            eqMaps.add(new LinkedHashMap<>());
-            for (String k : config.getPreciseFieldNumber().keySet()) fieldMaps.get(i).put(k, 0);
-            for (String k : config.getPreciseEqualityNumber().keySet()) eqMaps.get(i).put(k, 0);
-        }
-
-        for (Map.Entry<String, Integer> e : config.getPreciseFieldNumber().entrySet()) {
-            String k = e.getKey();
-            int total = e.getValue();
-            int base = total / T;
-            int rem = total % T;
-            for (int i = 0; i < T; i++) {
-                fieldMaps.get(i).put(k, fieldMaps.get(i).get(k) + base + (i < rem ? 1 : 0));
-            }
-        }
-        for (Map.Entry<String, Integer> e : config.getPreciseEqualityNumber().entrySet()) {
-            String k = e.getKey();
-            int total = e.getValue();
-            int base = total / T;
-            int rem = total % T;
-            for (int i = 0; i < T; i++) {
-                eqMaps.get(i).put(k, eqMaps.get(i).get(k) + base + (i < rem ? 1 : 0));
-            }
-        }
-
-        for (int i = 0; i < T; i++) {
-            int pubs = pubsPer + (i < pubsRem ? 1 : 0);
-            int subs = subsPer + (i < subsRem ? 1 : 0);
-            slices.add(new ThreadSlice(pubs, subs, fieldMaps.get(i), eqMaps.get(i)));
-        }
-        return slices;
-    }
-
     // ---- Random value generation ----
     private static Object randomValueForField(Config config, String field, Random random) {
         Config.FieldStructure fs = config.getFieldStructure().get(field);
@@ -105,9 +55,9 @@ public class Main {
 
     // ---- Publications generation ----
     private static List<String> generatePublicationsForSlice(Config config, ThreadSlice slice, Random rnd) {
-        List<String> lines = new ArrayList<>(slice.publicationsCount);
+        List<String> lines = new ArrayList<>(slice.getPublicationsCount());
         List<String> fields = new ArrayList<>(config.getFieldStructure().keySet());
-        for (int i = 0; i < slice.publicationsCount; i++) {
+        for (int i = 0; i < slice.getPublicationsCount(); i++) {
             Publication pub = new Publication();
             for (String f : fields) {
                 pub.put(f, randomValueForField(config, f, rnd));
@@ -118,7 +68,7 @@ public class Main {
     }
 
     private static List<String> generateAllPublications(Config config) {
-        List<ThreadSlice> slices = sliceForThreads(config);
+        List<ThreadSlice> slices = ThreadSlice.fromConfig(config);
         ExecutorService es = Executors.newFixedThreadPool(config.getNumThreads());
         try {
             List<Future<List<String>>> futures = new ArrayList<>();
@@ -147,12 +97,12 @@ public class Main {
     }
 
     private static List<Subscription> generateSubscriptionsForSlice(Config config, ThreadSlice slice, Random rnd) {
-        int subsCount = slice.subscriptionsCount;
+        int subsCount = slice.getSubscriptionsCount();
         List<Subscription> list = new ArrayList<>(subsCount);
         for (int i = 0; i < subsCount; i++) list.add(new Subscription());
 
-        Map<String, Integer> quotas = new LinkedHashMap<>(slice.fieldQuotas);
-        Map<String, Integer> eqLeft = new LinkedHashMap<>(slice.equalityQuotas);
+        Map<String, Integer> quotas = new LinkedHashMap<>(slice.getFieldQuotas());
+        Map<String, Integer> eqLeft = new LinkedHashMap<>(slice.getEqualityQuotas());
 
         PriorityQueue<Integer> pq = new PriorityQueue<>(Comparator.comparingInt(i -> list.get(i).size()));
         for (int i = 0; i < subsCount; i++) pq.offer(i);
@@ -201,7 +151,7 @@ public class Main {
     }
 
     private static List<Subscription> generateAllSubscriptions(Config config) {
-        List<ThreadSlice> slices = sliceForThreads(config);
+        List<ThreadSlice> slices = ThreadSlice.fromConfig(config);
         ExecutorService es = Executors.newFixedThreadPool(config.getNumThreads());
         try {
             List<Future<List<Subscription>>> futures = new ArrayList<>();

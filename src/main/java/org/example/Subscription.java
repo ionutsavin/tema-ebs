@@ -48,12 +48,12 @@ public class Subscription implements Comparable<Subscription> {
 
     public static String chooseOperator(Config config, String field, Map<String, Integer> equalityLeft, Random rnd) {
         int left = equalityLeft.getOrDefault(field, 0);
-        List<String> ops = config.getFieldStructure().get(field).operators();
-        if (left > 0 && ops.contains("=")) {
+        FieldStructure fs = config.getFieldStructure().get(field);
+        if (left > 0 && fs.hasOperator("=")) {
             equalityLeft.put(field, left - 1);
             return "=";
         }
-        return ops.get(rnd.nextInt(ops.size()));
+        return fs.getRandomOperator(rnd);
     }
 
     public static List<Subscription> generateForSlice(Config config, ThreadSlice slice, Random rnd) {
@@ -98,7 +98,7 @@ public class Subscription implements Comparable<Subscription> {
             }
 
             String op = chooseOperator(config, bestField, eqLeft, rnd);
-            Object val = Publication.generateRandomValue(config, bestField, rnd);
+            Object val = config.getFieldStructure().get(bestField).generateRandomValue(rnd);
             sub.addConstraint(bestField, op, val);
 
             quotas.put(bestField, quotas.get(bestField) - 1);

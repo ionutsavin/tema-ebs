@@ -42,9 +42,6 @@ public class Config {
     @Getter
     private final Map<String, Integer> preciseEqualityNumber = new LinkedHashMap<>();
 
-    public record FieldStructure(boolean isInterval, List<Object> values, List<String> operators) {
-    }
-
     private static final String DEFAULT_INPUT_JSON = "input.json";
 
     private String inputFile;

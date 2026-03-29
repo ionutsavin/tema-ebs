@@ -34,30 +34,13 @@ public class Publication {
         return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
-    public static Object generateRandomValue(Config config, String field, Random random) {
-        Config.FieldStructure fs = config.getFieldStructure().get(field);
-        if (fs == null) throw new IllegalArgumentException("Unknown field: " + field);
-
-        if (fs.isInterval()) {
-            double low = ((Number) fs.values().get(0)).doubleValue();
-            double high = ((Number) fs.values().get(1)).doubleValue();
-
-            double result = low + (high - low) * random.nextDouble();
-
-            return Math.round(result * 100.0) / 100.0;
-        } else {
-            List<Object> vals = fs.values();
-            return vals.get(random.nextInt(vals.size()));
-        }
-    }
-
     public static List<String> generateForSlice(Config config, ThreadSlice slice, Random rnd) {
         List<String> lines = new ArrayList<>(slice.getPublicationsCount());
         List<String> fields = new ArrayList<>(config.getFieldStructure().keySet());
         for (int i = 0; i < slice.getPublicationsCount(); i++) {
             Publication pub = new Publication();
             for (String f : fields) {
-                pub.put(f, generateRandomValue(config, f, rnd));
+                pub.put(f, config.getFieldStructure().get(f).generateRandomValue(rnd));
             }
             lines.add(pub.toString());
         }

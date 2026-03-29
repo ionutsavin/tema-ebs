@@ -5,16 +5,28 @@ import java.util.List;
 
 public class Main {
 
-    private static final String PUBLICATIONS_OUTPUT_FILE = "publications.txt";
-    private static final String SUBSCRIPTIONS_OUTPUT_FILE = "subscriptions.txt";
-    private static final String CHECK_OUTPUT_FILE = "check-output.txt";
+    private static final String DEFAULT_PUBLICATIONS_FILE = "publications.txt";
+    private static final String DEFAULT_SUBSCRIPTIONS_FILE = "subscriptions.txt";
+    private static final String DEFAULT_CHECK_OUTPUT_FILE = "check-output.txt";
 
     public static void main(String[] args) throws Exception {
+        String pubsFile = DEFAULT_PUBLICATIONS_FILE;
+        String subsFile = DEFAULT_SUBSCRIPTIONS_FILE;
+        String checkFile = DEFAULT_CHECK_OUTPUT_FILE;
+
+        for (int i = 0; i < args.length; i++) {
+            switch (args[i]) {
+                case "-p", "--publications" -> pubsFile = args[++i];
+                case "-s", "--subscriptions" -> subsFile = args[++i];
+                case "-c", "--check" -> checkFile = args[++i];
+            }
+        }
+
         Config config = Config.fromJson();
         OutputHandler handler = new OutputHandler(
-                Path.of(PUBLICATIONS_OUTPUT_FILE),
-                Path.of(SUBSCRIPTIONS_OUTPUT_FILE),
-                Path.of(CHECK_OUTPUT_FILE));
+                Path.of(pubsFile),
+                Path.of(subsFile),
+                Path.of(checkFile));
 
         long pStart = System.nanoTime();
         List<String> pubs = Publication.generateAll(config);

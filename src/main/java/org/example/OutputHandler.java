@@ -36,7 +36,7 @@ public class OutputHandler {
             writer.write("Expected Publications: " + config.getPublications() + "\n");
             writer.write("Generated Publications: " + pubs + "\n");
             writer.write("Expected subscriptions: " + config.getSubscriptions() + "\n");
-            writer.write("generated_subscriptions: " + subs + "\n");
+            writer.write("Generated_subscriptions: " + subs + "\n");
 
             Map<String, Long> genFieldCounts = new LinkedHashMap<>();
             Map<String, Long> genEqCounts = new LinkedHashMap<>();

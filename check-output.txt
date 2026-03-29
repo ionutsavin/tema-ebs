@@ -1,7 +1,7 @@
 Expected Publications: 200000
 Generated Publications: 200000
 Expected subscriptions: 200000
-generated_subscriptions: 200000
+Generated_subscriptions: 200000
 Field drop expected times : 60000
 Field drop generated times : 60000 
 Field date expected times : 40000
@@ -13,7 +13,7 @@ Field value generated times : 120000
 Field variation expected times : 100000
 Field variation generated times : 100000 
 Field company expected at least  equality times : 126000
-Field company generated equality times : 152955 
+Field company generated equality times : 153067 
 
 === SUBSCRIPTION BALANCE CHECK ===
 

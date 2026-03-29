@@ -22,14 +22,18 @@
 **Results**:
 
 - 1 thread
-  - Publication Time (s): 0.4096
-  - Subscription Time (s): 0.6660
-  - Total Time (s): 1.0756
+  - Publication Generation (s): 0.3699
+  - Publication Total (s): 0.4499
+  - Subscription Generation (s): 0.4734
+  - Subscription Total (s): 0.6688
+  - Total Time (s): 1.1187
 
 - 4 threads
-  - Publication Time (s): 0.3557
-  - Subscription Time (s): 0.5043
-  - Total Time (s): 0.8600
+  - Publication Generation (s): 0.3835
+  - Publication Total (s): 0.4758
+  - Subscription Generation (s): 0.3315
+  - Subscription Total (s): 0.5219
+  - Total Time (s): 0.9977
 
 --------------------------------
 **Configuration:**

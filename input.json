@@ -1,17 +1,16 @@
 {
-  "numbers": {
-    "publications": 200000,
-    "subscriptions": 200000,
-    "fieldWeights": {
-      "company": 0.9,
-      "value": 0.6,
-      "drop": 0.3,
-      "variation": 0.5,
-      "date": 0.2
-    },
-    "equalityWeights": {
-      "company": 0.7
-    }
+  "numThreads": 1,
+  "publications": 10000000,
+  "subscriptions": 10000000,
+  "fieldWeights": {
+    "company": 0.9,
+    "value": 0.6,
+    "drop": 0.3,
+    "variation": 0.5,
+    "date": 0.2
+  },
+  "equalityWeights": {
+    "company": 0.7
   },
   "structure": {
     "company": {
@@ -36,7 +35,13 @@
     },
     "date": {
       "isInterval": false,
-      "values": ["1.02.2022", "2.02.2022", "3.02.2022", "4.02.2022", "5.02.2022"],
+      "values": [
+        "1.02.2022",
+        "2.02.2022",
+        "3.02.2022",
+        "4.02.2022",
+        "5.02.2022"
+      ],
       "operators": ["=", ">", "<", ">=", "<="]
     }
   }

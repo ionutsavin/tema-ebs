@@ -51,20 +51,20 @@ public class Config {
     private void load(Path inputFile) throws IOException {
         String content = Files.readString(inputFile);
         JSONObject json = new JSONObject(content);
-        JSONObject numbers = json.getJSONObject("numbers");
         JSONObject structure = json.getJSONObject("structure");
 
-        this.publications = numbers.getInt("publications");
-        this.subscriptions = numbers.getInt("subscriptions");
+        this.numThreads = json.optInt("numThreads", 4);
+        this.publications = json.getInt("publications");
+        this.subscriptions = json.getInt("subscriptions");
 
-        if (numbers.has("fieldWeights")) {
-            JSONObject fw = numbers.getJSONObject("fieldWeights");
+        if (json.has("fieldWeights")) {
+            JSONObject fw = json.getJSONObject("fieldWeights");
             for (String key : fw.keySet()) {
                 this.fieldWeights.put(key, fw.getDouble(key));
             }
         }
-        if (numbers.has("equalityWeights")) {
-            JSONObject ew = numbers.getJSONObject("equalityWeights");
+        if (json.has("equalityWeights")) {
+            JSONObject ew = json.getJSONObject("equalityWeights");
             for (String key : ew.keySet()) {
                 this.equalityWeights.put(key, ew.getDouble(key));
             }

@@ -1,0 +1,12 @@
+// publication.proto
+syntax = "proto3";
+package ebs;
+
+message Publication {
+  string company   = 1;
+  double value     = 2;
+  double drop      = 3;
+  double variation = 4;
+  string date      = 5;
+  int64  _ts       = 6;
+}

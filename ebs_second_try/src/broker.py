@@ -1,31 +1,26 @@
-"""
-Nod broker individual din rețea - stochează subscripții și face matching
-"""
-
 import socket
 import json
 import threading
-import time
-import hashlib
-from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 from matching_engine import MatchingEngine
-from consistent_hash import ConsistentHashRing
+from kafka import KafkaConsumer
+from utils import parse_java_publication
 
 
 class BrokerNode:
-
-    def __init__(self, broker_id: str, host: str = 'localhost', port: int = 0):
+    def __init__(self, broker_id: str, host: str, port: int, next_broker_host: str = None,
+                 next_broker_port: int = None):
         self.broker_id = broker_id
         self.host = host
         self.port = port
-        self.subscriptions: Dict[str, List[Dict]] = defaultdict(list)
+        self.next_broker = (next_broker_host, next_broker_port) if next_broker_host else None
+
+        self.subscriptions = {}  # subscriber_id -> lista de subscriptii
+        self.subscriber_sockets = {}  # subscriber_id -> socket_activ
         self.matching_engine = MatchingEngine()
-        self.hash_ring: ConsistentHashRing = None
-        self.peers: Dict[str, Tuple[str, int]] = {}
-        self.running = True
+
         self.server_socket = None
-        self.messages_processed = 0
+        self.running = True
         self.lock = threading.Lock()
 
     def start(self):
@@ -33,147 +28,110 @@ class BrokerNode:
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(100)
-        self.port = self.server_socket.getsockname()[1]
-        print(f"  Broker {self.broker_id} pornit pe portul {self.port}")
+        print(f"[{self.broker_id}] Pornit pe portul {self.port}")
 
-        accept_thread = threading.Thread(target=self._accept_connections, daemon=True)
-        accept_thread.start()
+        threading.Thread(target=self._accept_connections, daemon=True).start()
 
     def _accept_connections(self):
         while self.running:
             try:
                 client_socket, address = self.server_socket.accept()
-                client_thread = threading.Thread(
-                    target=self._handle_client,
-                    args=(client_socket,),
-                    daemon=True
-                )
-                client_thread.start()
+                threading.Thread(target=self._handle_client, args=(client_socket,), daemon=True).start()
             except Exception:
-                if self.running:
-                    pass
+                pass
 
     def _handle_client(self, client_socket: socket.socket):
+        buffer = ""
         try:
-            data = client_socket.recv(65536).decode('utf-8')
-            if not data:
-                return
+            while self.running:
+                data = client_socket.recv(65536).decode('utf-8')
+                if not data:
+                    break
 
-            message = json.loads(data)
-            msg_type = message.get('type')
+                buffer += data
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    if not line.strip():
+                        continue
 
-            if msg_type == 'subscribe':
-                self._handle_subscription(message, client_socket)
-            elif msg_type == 'publication':
-                self._handle_publication(message, client_socket)
-
+                    message = json.loads(line)
+                    if message.get('type') == 'subscribe':
+                        self._handle_subscription(message, client_socket)
+                    elif message.get('type') == 'publication':
+                        self._handle_publication(message)
         except Exception as e:
-            print(f"  Broker {self.broker_id} eroare: {e}")
+            print(f"[{self.broker_id}] Eroare socket intern: {e}")  # Am scos pass-ul si afisam eroarea
         finally:
             client_socket.close()
 
     def _handle_subscription(self, message: Dict, client_socket: socket.socket):
-        """Procesează cerere de abonare cu rutare distribuită"""
         subscriber_id = message['subscriber_id']
-        subscription = message['subscription']
+        raw_sub = message['subscription']
 
-        # Calculează hash pentru subscripție
-        sub_hash = hashlib.md5(json.dumps(subscription, sort_keys=True).encode()).hexdigest()
-
-        # Rutare avansată: găsește broker-ul responsabil
-        if self.hash_ring:
-            responsible_broker = self.hash_ring.get_node(sub_hash)
-
-            if responsible_broker != self.broker_id:
-                response = {
-                    'status': 'forwarded',
-                    'broker': responsible_broker
-                }
-                client_socket.send(json.dumps(response).encode('utf-8'))
-                return
-
-        # Stochează local subscripția
-        with self.lock:
-            self.subscriptions[subscriber_id].append({
-                'hash': sub_hash,
-                'subscription': subscription,
-                'timestamp': time.time()
-            })
-
-        response = {
-            'status': 'subscribed',
-            'broker': self.broker_id
+        # JSON convertește tuplurile Python în liste — le reconvertim înapoi
+        subscription = {
+            field: tuple(cond) if isinstance(cond, list) else cond
+            for field, cond in raw_sub.items()
         }
-        client_socket.send(json.dumps(response).encode('utf-8'))
 
-    def _handle_publication(self, message: Dict, client_socket: socket.socket):
-        publication = message['publication']
-
-        matched_subscribers = []
         with self.lock:
-            for subscriber_id, subs in list(self.subscriptions.items()):
-                for sub_info in subs:
-                    if self.matching_engine.matches(publication, sub_info['subscription']):
-                        matched_subscribers.append(subscriber_id)
+            if subscriber_id not in self.subscriptions:
+                self.subscriptions[subscriber_id] = []
+            self.subscriptions[subscriber_id].append(subscription)
+            self.subscriber_sockets[subscriber_id] = client_socket
 
-            self.messages_processed += len(matched_subscribers)
+    def _handle_publication(self, message: Dict):
+        pub_data = message['publication']
+        matched = False
 
-        response = {
-            'status': 'processed',
-            'matches': len(matched_subscribers),
-            'broker': self.broker_id
-        }
-        client_socket.send(json.dumps(response).encode('utf-8'))
-
-    def setup_peers(self, peer_addresses: Dict[str, Tuple[str, int]]):
-        """Configurează conexiunile cu alți brokeri din rețea"""
-        self.peers = peer_addresses
-        broker_list = list(peer_addresses.keys()) + [self.broker_id]
-        self.hash_ring = ConsistentHashRing(broker_list)
-
-    def stop(self):
-        self.running = False
-        if self.server_socket:
-            self.server_socket.close()
-
-    def get_stats(self) -> Dict:
         with self.lock:
-            total_subscriptions = sum(len(subs) for subs in self.subscriptions.values())
-            return {
-                'broker_id': self.broker_id,
-                'subscriptions': total_subscriptions,
-                'messages_processed': self.messages_processed
-            }
+            for sub_id, subs in self.subscriptions.items():
+                for sub in subs:
+                    if self.matching_engine.matches(pub_data, sub):
+                        matched = True
+                        if sub_id in self.subscriber_sockets:
+                            try:
+                                notification = json.dumps({'type': 'match', 'publication': pub_data}) + '\n'
+                                self.subscriber_sockets[sub_id].send(notification.encode('utf-8'))
+                            except Exception:
+                                pass  # Socket-ul clientului a cazut
+                        break  # Evitam trimiterea duplicata catre acelasi client pentru aceeasi publicatie
 
+        # Forward catre urmatorul broker din topologie
+        if self.next_broker:
+            self._forward_publication(message)
 
-class BrokerNetwork:
-    """brokeri interconectați (overlay network)"""
+    def _forward_publication(self, message: Dict):
+        try:
+            forward_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            forward_socket.connect(self.next_broker)
+            payload = json.dumps(message) + '\n'
+            forward_socket.send(payload.encode('utf-8'))
+            forward_socket.close()
+        except Exception as e:
+            pass
 
-    def __init__(self, num_brokers: int = 3):
-        self.brokers: Dict[str, BrokerNode] = {}
-        self.addresses: Dict[str, Tuple[str, int]] = {}
+    def start_kafka_ingestion(self, topic_name='raw-publications', bootstrap_servers='localhost:9092'):
+        def consume():
+            consumer = KafkaConsumer(
+                topic_name,
+                bootstrap_servers=[bootstrap_servers],
+                auto_offset_reset='latest',
+                value_deserializer=lambda m: m.decode('utf-8', errors='ignore')
+            )
+            print(f"[{self.broker_id}] Conectat la Kafka. Asteapta publicatii...")
 
-        print(f"\nInitializare retea cu {num_brokers} brokeri...")
+            try:
+                for count, message in enumerate(consumer):
+                    raw_str = message.value
 
-        for i in range(num_brokers):
-            broker = BrokerNode(f"broker_{i}")
-            broker.start()
-            self.brokers[f"broker_{i}"] = broker
-            self.addresses[f"broker_{i}"] = ('localhost', broker.port)
+                    # Printam din 100 in 100 ca sa nu blocam consola, dar sa vedem ca vin date
+                    if count % 10000 == 0:
+                        print(f"[KAFKA DEBUG] Am primit pachetul {count} din Java: {raw_str}")
 
-        # Conectează brokerii între ei
-        for broker_id, broker in self.brokers.items():
-            peers = {bid: addr for bid, addr in self.addresses.items() if bid != broker_id}
-            broker.setup_peers(peers)
+                    pub_dict = parse_java_publication(raw_str)
+                    self._handle_publication({'type': 'publication', 'publication': pub_dict})
+            except Exception as e:
+                print(f"[EROARE CRITICA KAFKA] Ceva a crapat la citire: {e}")
 
-        print(f"Retea creata cu succes!\n")
-
-    def get_broker_addresses(self) -> Dict[str, Tuple[str, int]]:
-        return self.addresses
-
-    def stop_all(self):
-        for broker in self.brokers.values():
-            broker.stop()
-
-    def get_stats(self) -> List[Dict]:
-        return [broker.get_stats() for broker in self.brokers.values()]
+        threading.Thread(target=consume, daemon=True).start()

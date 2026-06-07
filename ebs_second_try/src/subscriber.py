@@ -1,54 +1,86 @@
-"""
-Nod subscriber care se conectează aleatoriu la brokeri pentru a înregistra subscripții
-"""
-
 import socket
 import json
-import random
 import threading
 from typing import Dict, Tuple
+from consistent_hash import ConsistentHashRing
+from utils import parse_java_subscription
 
 
 class Subscriber:
-
     def __init__(self, subscriber_id: str, broker_addresses: Dict[str, Tuple[str, int]]):
         self.subscriber_id = subscriber_id
         self.broker_addresses = broker_addresses
-        self.subscriptions = []
-        self.lock = threading.Lock()
 
-    def subscribe(self, subscription: Dict) -> Dict:
-        # Alege un broker aleatoriu
-        broker_id = random.choice(list(self.broker_addresses.keys()))
-        host, port = self.broker_addresses[broker_id]
+        self.hash_ring = ConsistentHashRing(list(broker_addresses.keys()))
+        self.sockets = {}
 
+        self.seen_ts = set()
+        self.seen_lock = threading.Lock()
+
+    def connect_to_brokers(self):
+        for broker_id, (host, port) in self.broker_addresses.items():
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.connect((host, port))
+                self.sockets[broker_id] = sock
+                threading.Thread(target=self._listen_for_matches, args=(broker_id, sock), daemon=True).start()
+            except Exception:
+                print(f"[Subscriber {self.subscriber_id}] Nu m-am putut conecta la {broker_id}")
+
+    def load_and_route_subscriptions(self, filepath: str):
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(5)
-            sock.connect((host, port))
+            with open(filepath, 'r') as f:
+                for line in f:
+                    sub_str = line.strip()
+                    if not sub_str:
+                        continue
 
-            message = {
-                'type': 'subscribe',
-                'subscriber_id': self.subscriber_id,
-                'subscription': subscription
-            }
+                    sub_dict = parse_java_subscription(sub_str)
+                    if not sub_dict:
+                        continue
 
-            sock.send(json.dumps(message).encode('utf-8'))
-            response = json.loads(sock.recv(4096).decode('utf-8'))
-            sock.close()
+                    first_key = list(sub_dict.keys())[0]
+                    target_broker = self.hash_ring.get_node(first_key)
 
-            with self.lock:
-                self.subscriptions.append(subscription)
+                    if target_broker in self.sockets:
+                        message = {
+                            'type': 'subscribe',
+                            'subscriber_id': self.subscriber_id,
+                            'subscription': sub_dict
+                        }
+                        self.sockets[target_broker].send((json.dumps(message) + '\n').encode('utf-8'))
 
-            return response
+            print(f"[Subscriber {self.subscriber_id}] Subscriptiile au fost rutate cu succes.")
+        except FileNotFoundError:
+            print("Fisierul cu subscriptii nu a fost gasit.")
 
-        except Exception as e:
-            print(f"  Subscriber {self.subscriber_id} eroare: {e}")
-            return {'status': 'error', 'message': str(e)}
+    def _listen_for_matches(self, broker_id: str, sock: socket.socket):
+        buffer = ""
+        try:
+            while True:
+                data = sock.recv(65536).decode('utf-8')
+                if not data:
+                    break
 
-    def get_stats(self) -> Dict:
-        with self.lock:
-            return {
-                'subscriber_id': self.subscriber_id,
-                'subscriptions_count': len(self.subscriptions)
-            }
+                buffer += data
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    if not line.strip():
+                        continue
+
+                    msg = json.loads(line)
+                    if msg.get('type') == 'match':
+                        pub = msg['publication']
+                        ts = pub.get('_ts')
+
+                        if ts is not None:
+                            with self.seen_lock:
+                                if ts in self.seen_ts:
+                                    continue
+                                self.seen_ts.add(ts)
+                                if len(self.seen_ts) > 100000:
+                                    self.seen_ts.clear()
+
+                        print(f"[{self.subscriber_id}] MATCH primit de la {broker_id}: {pub}")
+        except Exception:
+            pass

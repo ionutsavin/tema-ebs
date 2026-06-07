@@ -4,6 +4,8 @@ import threading
 import time
 import argparse
 import queue
+import signal
+import sys
 from typing import Dict, Tuple
 from consistent_hash import ConsistentHashRing
 from utils import parse_java_subscription, encrypt_subscription, decrypt_publication
@@ -31,7 +33,7 @@ class Subscriber:
         self._verify_lock = threading.Lock()
 
         self.match_log_file = open(f"{subscriber_id}_matches.csv", "w")
-        self.match_log_file.write("elapsed_ms,broker_id\n")
+        self.match_log_file.write("ts,latency_ms,broker_id\n")
         self.log_queue = queue.Queue()
         self._log_writer_stop = threading.Event()
         self._log_first_ts = None
@@ -91,10 +93,10 @@ class Subscriber:
                         self.broker_sub_count[target_broker] += 1
 
             if self.verify_matches and self.raw_subs:
-                print(f"[{self.subscriber_id}] Stored {len(self.raw_subs)} raw subs for verification")
+                print(f"[{self.subscriber_id}] Stored {len(self.raw_subs)} raw subs for verification", flush=True)
 
             self.print_balance_stats()
-            print(f"[Subscriber {self.subscriber_id}] Subscriptions routed successfully.")
+            print(f"[Subscriber {self.subscriber_id}] Subscriptions routed successfully.", flush=True)
         except FileNotFoundError:
             print("Subscriptions file not found.")
 
@@ -114,24 +116,24 @@ class Subscriber:
     def _log_writer(self):
         while not self._log_writer_stop.is_set():
             try:
-                ts, broker_id = self.log_queue.get(timeout=0.5)
+                ts, latency, broker_id = self.log_queue.get(timeout=0.5)
                 with self._log_ts_lock:
                     if self._log_first_ts is None:
                         self._log_first_ts = ts
                     elapsed = ts - self._log_first_ts
-                lines = [f"{elapsed},{broker_id}\n"]
+                lines = [f"{ts},{latency},{broker_id}\n"]
                 while not self.log_queue.empty():
-                    ts, broker_id = self.log_queue.get_nowait()
-                    with self._log_ts_lock:
-                        elapsed = ts - self._log_first_ts
-                    lines.append(f"{elapsed},{broker_id}\n")
+                    ts, latency, broker_id = self.log_queue.get_nowait()
+                    lines.append(f"{ts},{latency},{broker_id}\n")
                 self.match_log_file.write("".join(lines))
+                self.match_log_file.flush()
             except queue.Empty:
-                pass
+                self.match_log_file.flush()
 
     def _log_match(self, ts, broker_id):
         if ts is not None:
-            self.log_queue.put((ts, broker_id))
+            latency = int(time.time() * 1000) - ts
+            self.log_queue.put((ts, latency, broker_id))
 
     def _listen_for_matches(self, broker_id: str, sock: socket.socket):
         buffer = ""
@@ -212,10 +214,8 @@ def main():
     time.sleep(2)
     sub.load_and_route_subscriptions(args.subscriptions)
 
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
+    def shutdown(signum=None, frame=None):
+        print(f"\n[{args.id}] Shutting down.")
         sub.print_balance_stats()
         sub._log_writer_stop.set()
         sub._log_writer_thread.join(timeout=2)
@@ -226,7 +226,15 @@ def main():
             print(f"[{args.id}] === Match verification ===")
             print(f"  Verified: {sub._verified}/{total} ({(sub._verified / total * 100) if total else 0:.1f}%)")
             print(f"  Failed:   {sub._failed}/{total} ({(sub._failed / total * 100) if total else 0:.1f}%)")
-        print(f"\n[{args.id}] Shutting down.")
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, shutdown)
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        shutdown()
 
 
 if __name__ == "__main__":

@@ -44,7 +44,7 @@ class BrokerNode:
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(100)
-        print(f"[{self.broker_id}] Started on port {self.port}")
+        print(f"[{self.broker_id}] Started on port {self.port}", flush=True)
         threading.Thread(target=self._accept_connections, daemon=True).start()
 
     def _accept_connections(self):
@@ -239,18 +239,24 @@ class BrokerNode:
 
     def start_kafka_ingestion(self, topic_name='raw-publications', bootstrap_servers='localhost:9092'):
         def consume():
-            consumer = KafkaConsumer(
-                topic_name,
-                bootstrap_servers=[bootstrap_servers],
-                auto_offset_reset='latest',
-                value_deserializer=lambda m: m.decode('utf-8', errors='ignore')
-            )
-            print(f"[{self.broker_id}] Connected to Kafka. Waiting for publications...")
+            while True:
+                try:
+                    consumer = KafkaConsumer(
+                        topic_name,
+                        bootstrap_servers=[bootstrap_servers],
+                        auto_offset_reset='latest',
+                        value_deserializer=lambda m: m.decode('utf-8', errors='ignore')
+                    )
+                    break
+                except Exception as e:
+                    print(f"[KAFKA] Waiting for Kafka... ({e})", flush=True)
+                    time.sleep(2)
+            print(f"[{self.broker_id}] Connected to Kafka. Waiting for publications...", flush=True)
             try:
                 for count, message in enumerate(consumer):
                     raw_str = message.value
                     if count % 10000 == 0:
-                        print(f"[KAFKA DEBUG] Packet {count}: {raw_str}")
+                        print(f"[KAFKA DEBUG] Packet {count}: {raw_str}", flush=True)
 
                     proto = publication_pb2.Publication()
                     proto.ParseFromString(base64.b64decode(raw_str))
@@ -265,7 +271,7 @@ class BrokerNode:
 
                     self._handle_publication({'type': 'publication', 'publication': pub_dict})
             except Exception as e:
-                print(f"[KAFKA ERROR] {e}")
+                print(f"[KAFKA ERROR] {e}", flush=True)
 
         threading.Thread(target=consume, daemon=True).start()
 

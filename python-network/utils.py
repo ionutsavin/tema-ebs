@@ -1,16 +1,38 @@
-import hashlib
+import base64
 import re
 from datetime import datetime
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import padding
 
 # --- Same secret keys as in Java ---
 OPE_MULTIPLIER = 143.77
 OPE_SHIFT = 8921.45
 
-def _hash_text(value: str) -> str:
-    return hashlib.sha256(value.encode('utf-8')).hexdigest()[:16]
+AES_KEY = b'EBSp@ss!2024!!a!'
+
+def _encrypt_text(value: str) -> str:
+    padder = padding.PKCS7(128).padder()
+    padded_data = padder.update(value.encode('utf-8')) + padder.finalize()
+    cipher = Cipher(algorithms.AES(AES_KEY), modes.ECB())
+    encryptor = cipher.encryptor()
+    ciphertext = encryptor.update(padded_data) + encryptor.finalize()
+    return base64.b64encode(ciphertext).decode()
+
+def _decrypt_text(value: str) -> str:
+    ciphertext = base64.b64decode(value)
+    cipher = Cipher(algorithms.AES(AES_KEY), modes.ECB())
+    decryptor = cipher.decryptor()
+    padded_data = decryptor.update(ciphertext) + decryptor.finalize()
+    unpadder = padding.PKCS7(128).unpadder()
+    plaintext = unpadder.update(padded_data) + unpadder.finalize()
+    return plaintext.decode('utf-8')
 
 def _ope_encrypt(value: float) -> float:
     return (value * OPE_MULTIPLIER) + OPE_SHIFT
+
+def _ope_decrypt(value: float) -> float:
+    return (value - OPE_SHIFT) / OPE_MULTIPLIER
+
 
 def encrypt_subscription(sub_dict: dict) -> dict:
     encrypted = {}
@@ -22,15 +44,31 @@ def encrypt_subscription(sub_dict: dict) -> dict:
         op, value = condition
 
         if isinstance(value, str):
-            # Encrypt text with hash
-            encrypted[field] = (op, _hash_text(value))
+            encrypted[field] = (op, _encrypt_text(value))
         elif isinstance(value, (int, float)):
-            # Encrypt numbers with OPE
             encrypted[field] = (op, _ope_encrypt(float(value)))
         else:
             encrypted[field] = (op, value)
 
     return encrypted
+
+
+def decrypt_publication(encrypted_pub: dict) -> dict:
+    plain = {}
+    for field, value in encrypted_pub.items():
+        if field == '_ts':
+            plain[field] = value
+        elif isinstance(value, (int, float)):
+            plain[field] = round(_ope_decrypt(float(value)), 2)
+        elif isinstance(value, str):
+            try:
+                plain[field] = _decrypt_text(value)
+            except Exception:
+                plain[field] = value
+        else:
+            plain[field] = value
+    return plain
+
 
 def parse_java_publication(pub_str):
     pub_data = {}

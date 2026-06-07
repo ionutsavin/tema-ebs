@@ -3,7 +3,7 @@ import base64
 import argparse
 from kafka import KafkaProducer
 import publication_pb2
-from utils import parse_java_publication, _hash_text, _ope_encrypt
+from utils import parse_java_publication, _encrypt_text, _ope_encrypt
 
 
 KAFKA_TOPIC = "raw-publications"
@@ -38,11 +38,11 @@ def stream_publications(filepath: str, duration_minutes: float = 3):
         current_ts = int(time.time() * 1000)
 
         proto = publication_pb2.Publication(
-            company=_hash_text(str(pub.get("company", ""))),
+            company=_encrypt_text(str(pub.get("company", ""))),
             value=_ope_encrypt(float(pub.get("value", 0))),
             drop=_ope_encrypt(float(pub.get("drop", 0))),
             variation=_ope_encrypt(float(pub.get("variation", 0))),
-            date=_hash_text(str(pub.get("date", ""))),
+            date=_encrypt_text(str(pub.get("date", ""))),
             _ts=current_ts,
         )
 

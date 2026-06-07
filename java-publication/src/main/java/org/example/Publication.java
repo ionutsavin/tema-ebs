@@ -3,16 +3,14 @@ package org.example;
 import java.util.*;
 import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
-
-// Asigura-te ca ai importat clasa generata de Protobuf
-import ebs.PublicationOuterClass;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 public class Publication {
     private final LinkedHashMap<String, Object> values = new LinkedHashMap<>();
 
-    // --- Cheile secrete pentru Order-Preserving Encryption ---
-    private static final double OPE_MULTIPLIER = 143.77;
-    private static final double OPE_SHIFT = 8921.45;
+
 
     public void put(String field, Object value) {
         values.put(field, value);
@@ -22,10 +20,7 @@ public class Publication {
         return values.get(field);
     }
 
-    // --- Functii de criptare ---
-    public static double opeEncrypt(double value) {
-        return (value * OPE_MULTIPLIER) + OPE_SHIFT;
-    }
+
 
     public static String hashText(String input) {
         try {
@@ -74,49 +69,30 @@ public class Publication {
         return lines;
     }
 
-    public static void streamToKafka(Config config, KafkaProducerClient kafkaClient, String topic, long durationMinutes) {
-        long durationMs = durationMinutes * 60 * 1000;
-        long startTime = System.currentTimeMillis();
-        Random rnd = new Random();
-        List<String> fields = new ArrayList<>(config.getFieldStructure().keySet());
-
-        System.out.println("\n[Publisher] Incepem trimiterea continua de publicatii criptate timp de " + durationMinutes + " minute...");
-        long count = 0;
-
-        while (System.currentTimeMillis() - startTime < durationMs) {
-            Publication pub = new Publication();
-            for (String f : fields) {
-                pub.put(f, config.getFieldStructure().get(f).generateRandomValue(rnd));
+    public static List<String> generateAll(Config config) {
+        List<ThreadSlice> slices = ThreadSlice.fromConfig(config);
+        ExecutorService es = Executors.newFixedThreadPool(config.getNumThreads());
+        long start = System.nanoTime();
+        try {
+            List<Future<List<String>>> futures = new ArrayList<>();
+            for (ThreadSlice s : slices) {
+                futures.add(es.submit(() -> generateForSlice(config, s, new Random())));
             }
-            long currentTs = System.currentTimeMillis();
-            pub.put("_ts", currentTs);
-
-            // Construim Protobuf-ul aplicand criptarea pe loc
-            PublicationOuterClass.Publication proto = PublicationOuterClass.Publication.newBuilder()
-                    .setCompany(hashText((String) pub.get("company")))
-                    .setDate(hashText((String) pub.get("date")))
-                    .setValue(opeEncrypt(((Number) pub.get("value")).doubleValue()))
-                    .setDrop(opeEncrypt(((Number) pub.get("drop")).doubleValue()))
-                    .setVariation(opeEncrypt(((Number) pub.get("variation")).doubleValue()))
-                    .setTs(currentTs) // Metadata ramane in clar
-                    .build();
-
-            String encoded = Base64.getEncoder().encodeToString(proto.toByteArray());
-            kafkaClient.send(topic, encoded);
-            count++;
-
-            try {
-                Thread.sleep(2);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
+            List<String> all = new ArrayList<>(config.getPublications());
+            for (Future<List<String>> f : futures) {
+                try {
+                    all.addAll(f.get());
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
             }
-
-            if (count % 10000 == 0) {
-                System.out.println("  -> Trimise: " + count + " publicatii...");
-            }
+            long end = System.nanoTime();
+            System.out.printf("Execution time for generating publications: %.4f seconds%n", (end - start) / 1e9);
+            return all;
+        } finally {
+            es.shutdownNow();
         }
-
-        System.out.println("[Publisher] Timpul a expirat. S-au generat si livrat " + count + " publicatii criptate.");
     }
+
+
 }

@@ -1,6 +1,8 @@
 import socket
 import json
 import threading
+import time
+import argparse
 from typing import Dict, Tuple
 from consistent_hash import ConsistentHashRing
 from utils import parse_java_subscription, encrypt_subscription
@@ -25,13 +27,13 @@ class Subscriber:
                 sock.connect((host, port))
                 self.sockets[broker_id] = sock
 
-                # Inregistram ID-ul subscriberului la acest broker pentru a putea primi match-uri
+                # Register subscriber ID with this broker to receive match notifications
                 register_msg = {'type': 'register', 'subscriber_id': self.subscriber_id}
                 sock.sendall((json.dumps(register_msg) + '\n').encode('utf-8'))
 
                 threading.Thread(target=self._listen_for_matches, args=(broker_id, sock), daemon=True).start()
             except Exception:
-                print(f"[Subscriber {self.subscriber_id}] Nu m-am putut conecta la {broker_id}")
+                print(f"[Subscriber {self.subscriber_id}] Could not connect to {broker_id}")
 
     def load_and_route_subscriptions(self, filepath: str):
         try:
@@ -45,7 +47,7 @@ class Subscriber:
                     if not sub_dict:
                         continue
 
-                    # criptam subscriptia inainte sa o trimitem
+                    # encrypt subscription before sending
                     encrypted_sub = encrypt_subscription(sub_dict)
                     if not encrypted_sub:
                         continue
@@ -65,9 +67,9 @@ class Subscriber:
                             (json.dumps(message) + '\n').encode('utf-8')
                         )
 
-            print(f"[Subscriber {self.subscriber_id}] Subscriptiile au fost rutate cu succes.")
+            print(f"[Subscriber {self.subscriber_id}] Subscriptions routed successfully.")
         except FileNotFoundError:
-            print("Fisierul cu subscriptii nu a fost gasit.")
+            print("Subscriptions file not found.")
 
     def _listen_for_matches(self, broker_id: str, sock: socket.socket):
         buffer = ""
@@ -99,6 +101,35 @@ class Subscriber:
                                 if len(self.seen_ts) > 100000:
                                     self.seen_ts.clear()
 
-                        print(f"[{self.subscriber_id}] MATCH primit de la {broker_id}: {pub}")
+                        print(f"[{self.subscriber_id}] MATCH received from {broker_id}: {pub}")
         except Exception:
             pass
+
+
+BROKER_ADDRESSES = {
+    "broker_0": ("localhost", 8001),
+    "broker_1": ("localhost", 8002),
+    "broker_2": ("localhost", 8003),
+}
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Start a subscriber node")
+    parser.add_argument("--id", required=True, choices=["client_1", "client_2", "client_3"])
+    parser.add_argument("--subscriptions", default="subscriptions.txt")
+    args = parser.parse_args()
+
+    sub = Subscriber(args.id, BROKER_ADDRESSES)
+    sub.connect_to_brokers()
+    time.sleep(2)
+    sub.load_and_route_subscriptions(args.subscriptions)
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print(f"\n[{args.id}] Shutting down.")
+
+
+if __name__ == "__main__":
+    main()

@@ -2,6 +2,7 @@ import socket
 import json
 import threading
 import time
+import argparse
 from typing import Dict
 from matching_engine import MatchingEngine
 from kafka import KafkaConsumer
@@ -43,7 +44,7 @@ class BrokerNode:
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(100)
-        print(f"[{self.broker_id}] Pornit pe portul {self.port}")
+        print(f"[{self.broker_id}] Started on port {self.port}")
         threading.Thread(target=self._accept_connections, daemon=True).start()
 
     def _accept_connections(self):
@@ -80,7 +81,7 @@ class BrokerNode:
                     elif message.get('type') == 'publication':
                         self._handle_publication(message)
         except Exception as e:
-            print(f"[{self.broker_id}] Eroare socket: {e}")
+            print(f"[{self.broker_id}] Socket error: {e}")
         finally:
             client_socket.close()
 
@@ -112,7 +113,7 @@ class BrokerNode:
         subscriber_id = message['subscriber_id']
         with self.lock:
             self.subscriber_sockets[subscriber_id] = client_socket
-        print(f"[{self.broker_id}] Subscriber {subscriber_id} inregistrat.")
+        print(f"[{self.broker_id}] Subscriber {subscriber_id} registered.")
 
     def _handle_replicated_subscription(self, message: Dict):
         subscriber_id = message['subscriber_id']
@@ -134,10 +135,10 @@ class BrokerNode:
     def _handle_publication(self, message: Dict):
         pub_data = message['publication']
 
-        # brokerul vede doar hashuri - demonstreaza bonus 3
+        # broker only sees hashes - demonstrates bonus 3
         if not hasattr(self, '_crypto_debug'):
             self._crypto_debug = True
-            print(f"[{self.broker_id}] Publicatie criptata (ce vede brokerul): {pub_data}")
+            print(f"[{self.broker_id}] Encrypted publication (broker view): {pub_data}")
 
         with self.lock:
             for sub_id, subs in self.subscriptions.items():
@@ -151,12 +152,12 @@ class BrokerNode:
                     owner = rep['owner_broker']
                     if not self.broker_status.get(owner, True):
                         if self.matching_engine.matches(pub_data, rep['subscription']):
-                            print(f"[{self.broker_id}] Preiau match pentru {sub_id} — owner {owner} e offline")
+                            print(f"[{self.broker_id}] Taking over match for {sub_id} — owner {owner} is offline")
                             self._notify_subscriber(sub_id, pub_data)
                             break
 
         if self.next_broker:
-            # DEBUG: print(f"[{self.broker_id}] Redirecționez spre următorul broker.")
+            # DEBUG: print(f"[{self.broker_id}] Forwarding to next broker.")
             self._forward_publication(message)
 
     def _notify_subscriber(self, sub_id: str, pub_data: Dict):
@@ -193,7 +194,7 @@ class BrokerNode:
             for bid, addr in self.all_brokers.items():
                 if addr == self.next_broker:
                     if self.broker_status.get(bid, True):
-                        print(f"[{self.broker_id}] Urmatorul broker {bid} nu raspunde, marcat offline.")
+                        print(f"[{self.broker_id}] Next broker {bid} unreachable, marked offline.")
                         self._mark_broker_down(self.next_broker)
                     break
 
@@ -212,7 +213,7 @@ class BrokerNode:
             if addr == address:
                 with self.lock:
                     self.broker_status[bid] = False
-                print(f"[{self.broker_id}] {bid} marcat ca offline.")
+                print(f"[{self.broker_id}] {bid} marked as offline.")
                 break
 
     def _health_check_loop(self):
@@ -228,12 +229,12 @@ class BrokerNode:
                     s.close()
                     with self.lock:
                         if not self.broker_status.get(bid, True):
-                            print(f"[{self.broker_id}] {bid} a revenit online.")
+                            print(f"[{self.broker_id}] {bid} came back online.")
                         self.broker_status[bid] = True
                 except Exception:
                     with self.lock:
                         if self.broker_status.get(bid, True):
-                            print(f"[{self.broker_id}] {bid} detectat offline via health check.")
+                            print(f"[{self.broker_id}] {bid} detected offline via health check.")
                         self.broker_status[bid] = False
 
     def start_kafka_ingestion(self, topic_name='raw-publications', bootstrap_servers='localhost:9092'):
@@ -244,12 +245,12 @@ class BrokerNode:
                 auto_offset_reset='latest',
                 value_deserializer=lambda m: m.decode('utf-8', errors='ignore')
             )
-            print(f"[{self.broker_id}] Conectat la Kafka. Asteapta publicatii...")
+            print(f"[{self.broker_id}] Connected to Kafka. Waiting for publications...")
             try:
                 for count, message in enumerate(consumer):
                     raw_str = message.value
                     if count % 10000 == 0:
-                        print(f"[KAFKA DEBUG] Pachet {count}: {raw_str}")
+                        print(f"[KAFKA DEBUG] Packet {count}: {raw_str}")
 
                     proto = publication_pb2.Publication()
                     proto.ParseFromString(base64.b64decode(raw_str))
@@ -264,6 +265,53 @@ class BrokerNode:
 
                     self._handle_publication({'type': 'publication', 'publication': pub_dict})
             except Exception as e:
-                print(f"[EROARE KAFKA] {e}")
+                print(f"[KAFKA ERROR] {e}")
 
         threading.Thread(target=consume, daemon=True).start()
+
+
+BROKER_ADDRESSES = {
+    "broker_0": ("localhost", 8001),
+    "broker_1": ("localhost", 8002),
+    "broker_2": ("localhost", 8003),
+}
+
+NEXT_BROKER = {
+    "broker_0": ("localhost", 8002),
+    "broker_1": ("localhost", 8003),
+    "broker_2": None,
+}
+
+KAFKA_TOPIC = "raw-publications"
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Start a broker node")
+    parser.add_argument("--id", required=True, choices=list(BROKER_ADDRESSES.keys()))
+    args = parser.parse_args()
+
+    bid = args.id
+    host, port = BROKER_ADDRESSES[bid]
+    nb = NEXT_BROKER[bid]
+    next_host = nb[0] if nb else None
+    next_port = nb[1] if nb else None
+
+    broker = BrokerNode(bid, host, port,
+                        next_broker_host=next_host, next_broker_port=next_port,
+                        all_brokers=BROKER_ADDRESSES)
+    broker.start()
+
+    if bid == "broker_0":
+        broker.start_kafka_ingestion(topic_name=KAFKA_TOPIC)
+        print(f"[{bid}] Consuming from Kafka topic '{KAFKA_TOPIC}'...")
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print(f"\n[{bid}] Shutting down.")
+        broker.running = False
+
+
+if __name__ == "__main__":
+    main()

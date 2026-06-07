@@ -1,5 +1,5 @@
 """
-Consistent Hashing pentru rutarea distribuită a subscripțiilor între brokeri
+Consistent Hashing for distributed subscription routing across brokers
 """
 
 import hashlib
@@ -7,7 +7,7 @@ from typing import List
 
 
 class ConsistentHashRing:
-    """Inel de hash consistent pentru distribuția subscripțiilor"""
+    """Consistent hash ring for distributing subscriptions"""
 
     def __init__(self, nodes: List[str], virtual_nodes: int = 150):
         self.nodes = nodes.copy()
@@ -17,11 +17,11 @@ class ConsistentHashRing:
         self._build_ring()
 
     def _hash(self, key: str) -> int:
-        """Calculează hash MD5 pentru o cheie"""
+        """Compute MD5 hash for a key"""
         return int(hashlib.md5(key.encode()).hexdigest(), 16)
 
     def _build_ring(self):
-        """inelul cu noduri virtuale pentru distribuție uniformă"""
+        """Build ring with virtual nodes for even distribution"""
         self.ring.clear()
         for node in self.nodes:
             for i in range(self.virtual_nodes):
@@ -31,13 +31,13 @@ class ConsistentHashRing:
         self.sorted_keys = sorted(self.ring.keys())
 
     def get_node(self, key: str) -> str:
-        """nodul responsabil pentru o cheie dată"""
+        """Get the node responsible for a given key"""
         if not self.ring:
             return None
 
         hash_val = self._hash(key)
 
-        # Găsește primul nod cu hash >= hash_val
+        # Find first node with hash >= hash_val
         for key_hash in self.sorted_keys:
             if key_hash >= hash_val:
                 return self.ring[key_hash]

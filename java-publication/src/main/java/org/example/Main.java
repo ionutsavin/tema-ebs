@@ -2,40 +2,45 @@ package org.example;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import java.util.Random;
 
 public class Main {
 
     private static final String DEFAULT_CONFIG_FILE = "input.json";
-    private static final String SUBSCRIPTIONS_FILE = "subscriptions.txt";
 
     public static void main(String[] args) throws Exception {
         String configFile = DEFAULT_CONFIG_FILE;
+        String outputDir = ".";
         for (int i = 0; i < args.length; i++) {
-            if (args[i].equals("-c") || args[i].equals("--config")) {
-                configFile = args[++i];
+            switch (args[i]) {
+                case "-c", "--config" -> configFile = args[++i];
+                case "-o", "--output-dir" -> outputDir = args[++i];
             }
         }
 
         Config config = Config.fromJson(Path.of(configFile));
-        OutputHandler handler = new OutputHandler(null, Path.of(SUBSCRIPTIONS_FILE), Path.of("check-output.txt"));
+        Path subsPath = Path.of(outputDir, "subscriptions.txt");
+        Path pubsPath = Path.of(outputDir, "publications.txt");
+        OutputHandler handler = new OutputHandler(pubsPath, subsPath, Path.of(outputDir, "check-output.txt"));
 
-//        // PASUL 1: Generam subscriptiile si le scriem in fisierul citit de Python
-//        System.out.println("Generam subscriptiile...");
-//        long sStart = System.nanoTime();
-//        List<String> subsStr = Subscription.toStrings(Subscription.generateAll(config));
-//        handler.writeSubscriptions(subsStr);
-//        double sSec = (System.nanoTime() - sStart) / 1e9;
-//        System.out.printf("S-au scris %d subscriptii in fisierul %s in %.4f secunde.%n", config.getSubscriptions(), SUBSCRIPTIONS_FILE, sSec);
+        System.out.println("Generating subscriptions...");
+        long sStart = System.nanoTime();
+        List<String> subsStr = Subscription.toStrings(Subscription.generateAll(config));
+        handler.writeSubscriptions(subsStr);
+        double sSec = (System.nanoTime() - sStart) / 1e9;
+        System.out.printf("Wrote %d subscriptions to %s in %.4f seconds.%n",
+                config.getSubscriptions(), subsPath, sSec);
 
-        // PASUL 2: Conectarea la Kafka si inceperea testului de 3 minute
-        KafkaProducerClient kafkaClient = new KafkaProducerClient("localhost:9092");
-
-        try {
-            // Trimitem datele in mod streaming timp de 3 minute
-            Publication.streamToKafka(config, kafkaClient, "raw-publications", 3);
-        } finally {
-            kafkaClient.close();
-            System.out.println("Conexiunea cu Kafka a fost inchisa cu succes.");
-        }
+        // generate only as many as would be sent in 3 min at 2ms each
+        int pubCount = (int) (3 * 60 * 1000 / 2.0);
+        System.out.println("Generating " + pubCount + " publications...");
+        long pStart = System.nanoTime();
+        List<String> pubsStr = Publication.generateForSlice(config,
+                new ThreadSlice(pubCount, 0, Map.of(), Map.of()), new Random());
+        handler.writePublications(pubsStr);
+        double pSec = (System.nanoTime() - pStart) / 1e9;
+        System.out.printf("Wrote %d publications to %s in %.4f seconds.%n",
+                pubsStr.size(), pubsPath, pSec);
     }
 }

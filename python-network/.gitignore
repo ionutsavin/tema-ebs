@@ -35,6 +35,11 @@ ENV/
 *.swo
 *~
 
+# Generated data files
+publications.txt
+subscriptions.txt
+check-output.txt
+
 # OS
 .DS_Store
 Thumbs.db

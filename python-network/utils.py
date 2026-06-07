@@ -2,7 +2,7 @@ import hashlib
 import re
 from datetime import datetime
 
-# --- Aceleasi chei secrete ca in Java ---
+# --- Same secret keys as in Java ---
 OPE_MULTIPLIER = 143.77
 OPE_SHIFT = 8921.45
 
@@ -22,10 +22,10 @@ def encrypt_subscription(sub_dict: dict) -> dict:
         op, value = condition
 
         if isinstance(value, str):
-            # Textul se cripteaza cu Hash
+            # Encrypt text with hash
             encrypted[field] = (op, _hash_text(value))
         elif isinstance(value, (int, float)):
-            # Numerele se cripteaza cu algoritmul OPE
+            # Encrypt numbers with OPE
             encrypted[field] = (op, _ope_encrypt(float(value)))
         else:
             encrypted[field] = (op, value)

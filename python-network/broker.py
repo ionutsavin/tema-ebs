@@ -17,14 +17,22 @@ import publication_pb2
 
 
 class BrokerNode:
-    def __init__(self, broker_id: str, host: str, port: int,
-                 next_broker_host: str = None, next_broker_port: int = None,
-                 all_brokers: Dict[str, tuple] = None,
-                 logger: logging.Logger = None):
+    def __init__(
+        self,
+        broker_id: str,
+        host: str,
+        port: int,
+        next_broker_host: str = None,
+        next_broker_port: int = None,
+        all_brokers: Dict[str, tuple] = None,
+        logger: logging.Logger = None,
+    ):
         self.broker_id = broker_id
         self.host = host
         self.port = port
-        self.next_broker = (next_broker_host, next_broker_port) if next_broker_host else None
+        self.next_broker = (
+            (next_broker_host, next_broker_port) if next_broker_host else None
+        )
         self.all_brokers = all_brokers or {}
         self.logger = logger
 
@@ -120,44 +128,55 @@ class BrokerNode:
         h = hashlib.md5(sub_str.encode("utf-8")).hexdigest()
         return self.hash_ring.get_node(h)
 
-    def _store_active_subscription(self, subscriber_id: str, subscription: dict, entry_broker: str):
+    def _store_active_subscription(
+        self, subscriber_id: str, subscription: dict, entry_broker: str
+    ):
         if subscriber_id not in self.subscriptions:
             self.subscriptions[subscriber_id] = []
-        self.subscriptions[subscriber_id].append({
-            "subscription": subscription,
-            "entry_broker": entry_broker,
-        })
+        self.subscriptions[subscriber_id].append(
+            {
+                "subscription": subscription,
+                "entry_broker": entry_broker,
+            }
+        )
 
     def _store_replicated_subscription(
-        self, subscriber_id: str, subscription: dict, owner_broker: str, entry_broker: str,
+        self,
+        subscriber_id: str,
+        subscription: dict,
+        owner_broker: str,
+        entry_broker: str,
     ):
         if subscriber_id not in self.replicated_subs:
             self.replicated_subs[subscriber_id] = []
-        self.replicated_subs[subscriber_id].append({
-            "subscription": subscription,
-            "owner_broker": owner_broker,
-            "entry_broker": entry_broker,
-        })
+        self.replicated_subs[subscriber_id].append(
+            {
+                "subscription": subscription,
+                "owner_broker": owner_broker,
+                "entry_broker": entry_broker,
+            }
+        )
 
-    # ------------------------------------------------------------------
-    # Subscription handling (directly from a subscriber TCP connection)
-    # ------------------------------------------------------------------
     def _handle_subscription(self, message: Dict, client_socket: socket.socket):
         subscriber_id = message["subscriber_id"]
         raw_sub = message["subscription"]
 
-        # The subscriber is connected to THIS broker — store the socket.
         with self.lock:
             self.subscriber_sockets[subscriber_id] = client_socket
 
         target_broker = self._get_target_broker(raw_sub)
-        self.logger.info("sub_received subscriber_id=%s target_broker=%s", subscriber_id, target_broker)
+        self.logger.info(
+            "sub_received subscriber_id=%s target_broker=%s",
+            subscriber_id,
+            target_broker,
+        )
 
         if target_broker == self.broker_id:
-            # I am the owner — store locally and replicate.
             subscription = self._subscription_from_raw(raw_sub)
             with self.lock:
-                self._store_active_subscription(subscriber_id, subscription, self.broker_id)
+                self._store_active_subscription(
+                    subscriber_id, subscription, self.broker_id
+                )
             self.logger.info("sub_stored_local subscriber_id=%s", subscriber_id)
             if self.next_broker:
                 rep_message = {
@@ -169,7 +188,6 @@ class BrokerNode:
                 }
                 self._forward_message(rep_message, self.next_broker)
         else:
-            # Route to the target broker.
             target_addr = self.all_brokers.get(target_broker)
             if target_addr:
                 routed_message = {
@@ -181,7 +199,8 @@ class BrokerNode:
                 self._forward_message(routed_message, target_addr)
                 self.logger.info(
                     "sub_routed subscriber_id=%s target_broker=%s",
-                    subscriber_id, target_broker,
+                    subscriber_id,
+                    target_broker,
                 )
 
     def _handle_register(self, message: Dict, client_socket: socket.socket):
@@ -190,9 +209,6 @@ class BrokerNode:
             self.subscriber_sockets[subscriber_id] = client_socket
         self.logger.info("subscriber_registered subscriber_id=%s", subscriber_id)
 
-    # ------------------------------------------------------------------
-    # Routed subscription (arrives at the target owner from entry broker)
-    # ------------------------------------------------------------------
     def _handle_routed_subscription(self, message: Dict):
         subscriber_id = message["subscriber_id"]
         raw_sub = message["subscription"]
@@ -203,9 +219,12 @@ class BrokerNode:
         with self.lock:
             self._store_active_subscription(subscriber_id, subscription, entry_broker)
 
-        self.logger.info("sub_stored_routed subscriber_id=%s entry_broker=%s", subscriber_id, entry_broker)
+        self.logger.info(
+            "sub_stored_routed subscriber_id=%s entry_broker=%s",
+            subscriber_id,
+            entry_broker,
+        )
 
-        # Replicate to next broker for failover.
         if self.next_broker:
             rep_message = {
                 "type": "subscribe_replicated",
@@ -216,9 +235,6 @@ class BrokerNode:
             }
             self._forward_message(rep_message, self.next_broker)
 
-    # ------------------------------------------------------------------
-    # Replicated subscription (from owner broker — stored for failover)
-    # ------------------------------------------------------------------
     def _handle_replicated_subscription(self, message: Dict):
         subscriber_id = message["subscriber_id"]
         raw_sub = message["subscription"]
@@ -229,26 +245,25 @@ class BrokerNode:
 
         with self.lock:
             self._store_replicated_subscription(
-                subscriber_id, subscription, owner_broker, entry_broker,
+                subscriber_id,
+                subscription,
+                owner_broker,
+                entry_broker,
             )
 
         self.logger.info(
             "sub_replicated subscriber_id=%s owner_broker=%s entry_broker=%s",
-            subscriber_id, owner_broker, entry_broker,
+            subscriber_id,
+            owner_broker,
+            entry_broker,
         )
 
-    # ------------------------------------------------------------------
-    # Match forwarding (target owner -> entry broker)
-    # ------------------------------------------------------------------
     def _handle_match_forward(self, message: Dict):
         subscriber_id = message["subscriber_id"]
         pub_data = message["publication"]
         self.logger.info("match_forward_received subscriber_id=%s", subscriber_id)
         self._notify_subscriber(subscriber_id, pub_data)
 
-    # ------------------------------------------------------------------
-    # Publication handling — every broker matches its own shard
-    # ------------------------------------------------------------------
     def _handle_publication(self, message: Dict):
         pub_data = message["publication"]
         self.processed_pub_count += 1
@@ -285,17 +300,22 @@ class BrokerNode:
                     owner = rep["owner_broker"]
                     if not self.broker_status.get(owner, True):
                         if self.matching_engine.matches(pub_data, rep["subscription"]):
-                            matches_to_forward.append((rep["entry_broker"], sub_id, pub_data))
+                            matches_to_forward.append(
+                                (rep["entry_broker"], sub_id, pub_data)
+                            )
                             self.logger.info(
                                 "failover_match subscriber_id=%s owner_broker=%s",
-                                sub_id, owner,
+                                sub_id,
+                                owner,
                             )
                             break
 
         if matches_to_forward or local_matches:
             self.logger.info(
                 "pub_matched local_matches=%d forwards=%d active_subs=%d",
-                local_matches, len(matches_to_forward), len(self.subscriptions),
+                local_matches,
+                len(matches_to_forward),
+                len(self.subscriptions),
             )
 
         for entry_broker_id, sub_id, fwd_pub in matches_to_forward:
@@ -305,18 +325,21 @@ class BrokerNode:
                 "publication": fwd_pub,
             }
             if self._forward_to_broker(entry_broker_id, msg):
-                self.logger.info("match_forwarded subscriber_id=%s entry_broker=%s", sub_id, entry_broker_id)
+                self.logger.info(
+                    "match_forwarded subscriber_id=%s entry_broker=%s",
+                    sub_id,
+                    entry_broker_id,
+                )
 
         if self.next_broker:
             self._forward_publication(message)
 
-    # ------------------------------------------------------------------
-    # Notification helpers
-    # ------------------------------------------------------------------
     def _notify_subscriber(self, sub_id: str, pub_data: Dict):
         if sub_id in self.subscriber_sockets:
             try:
-                notification = json.dumps({"type": "match", "publication": pub_data}) + "\n"
+                notification = (
+                    json.dumps({"type": "match", "publication": pub_data}) + "\n"
+                )
                 self.subscriber_sockets[sub_id].sendall(notification.encode("utf-8"))
                 self.logger.info("notify_sent subscriber_id=%s", sub_id)
             except Exception:
@@ -416,13 +439,14 @@ class BrokerNode:
                 except Exception:
                     with self.lock:
                         if self.broker_status.get(bid, True):
-                            self.logger.warning("broker_offline_healthcheck broker_id=%s", bid)
+                            self.logger.warning(
+                                "broker_offline_healthcheck broker_id=%s", bid
+                            )
                         self.broker_status[bid] = False
 
-    # ------------------------------------------------------------------
-    # Kafka ingestion (only broker_0 consumes by default)
-    # ------------------------------------------------------------------
-    def start_kafka_ingestion(self, topic_name="raw-publications", bootstrap_servers="localhost:9092"):
+    def start_kafka_ingestion(
+        self, topic_name="raw-publications", bootstrap_servers="localhost:9092"
+    ):
         def consume():
             config = {
                 "bootstrap.servers": bootstrap_servers,
@@ -456,7 +480,9 @@ class BrokerNode:
                         "variation": proto.variation,
                         "_ts": proto._ts,
                     }
-                    self._handle_publication({"type": "publication", "publication": pub_dict})
+                    self._handle_publication(
+                        {"type": "publication", "publication": pub_dict}
+                    )
                 except Exception as e:
                     self.logger.warning("kafka_waiting error=%s", e)
                     if consumer is not None:
@@ -488,8 +514,12 @@ KAFKA_TOPIC = "raw-publications"
 def main():
     parser = argparse.ArgumentParser(description="Start a broker node")
     parser.add_argument("--id", required=True, choices=list(BROKER_ADDRESSES.keys()))
-    parser.add_argument("--log", default=None, help="Path to structured log file (optional)")
-    parser.add_argument("--no-log", action="store_true", help="Disable all logging output")
+    parser.add_argument(
+        "--log", default=None, help="Path to structured log file (optional)"
+    )
+    parser.add_argument(
+        "--no-log", action="store_true", help="Disable all logging output"
+    )
     args = parser.parse_args()
 
     bid = args.id
@@ -501,8 +531,11 @@ def main():
     logger, listener = setup_logger(bid, args.log, disable=args.no_log)
 
     broker = BrokerNode(
-        bid, host, port,
-        next_broker_host=next_host, next_broker_port=next_port,
+        bid,
+        host,
+        port,
+        next_broker_host=next_host,
+        next_broker_port=next_port,
         all_brokers=BROKER_ADDRESSES,
         logger=logger,
     )

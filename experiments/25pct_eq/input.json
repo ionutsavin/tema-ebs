@@ -1,0 +1,33 @@
+{
+  "numThreads": 1,
+  "publications": 10000000,
+  "subscriptions": 3333,
+  "fieldWeights": {
+    "company": 1.0
+  },
+  "equalityWeights": {
+    "company": 0
+  },
+  "structure": {
+    "company": {
+      "isInterval": false,
+      "values": ["Google", "Apple", "Microsoft", "Amazon", "Meta"],
+      "operators": ["=", "!=", "!=", "!="]
+    },
+    "value": {
+      "isInterval": true,
+      "values": [10.0, 1000.0],
+      "operators": ["=", ">", "<", ">=", "<="]
+    },
+    "drop": {
+      "isInterval": true,
+      "values": [0.0, 25.0],
+      "operators": ["=", ">", "<", ">=", "<="]
+    },
+    "variation": {
+      "isInterval": true,
+      "values": [0.1, 0.99],
+      "operators": ["=", ">", "<", ">=", "<="]
+    }
+  }
+}

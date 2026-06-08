@@ -42,7 +42,6 @@ def stream_publications(filepath: str, duration_minutes: float = 3):
             value=_ope_encrypt(float(pub.get("value", 0))),
             drop=_ope_encrypt(float(pub.get("drop", 0))),
             variation=_ope_encrypt(float(pub.get("variation", 0))),
-            date=_encrypt_text(str(pub.get("date", ""))),
             _ts=current_ts,
         )
 

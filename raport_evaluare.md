@@ -5,7 +5,7 @@
 - **10,000 subscriptions** per subscriber (3 subscribers, 30,000 total)
 - **90,000 publications** generated (≈66,000 sent in 3 min at 2ms interval)
 - **3 brokers** in chain: `broker_0` (Kafka consumer) → `broker_1` → `broker_2`
-- Fields: `company` (text, AES-ECB), `value` (numeric, OPE), `drop` (numeric, OPE), `variation` (numeric, OPE), `date` (text, AES-ECB)
+- Fields: `company` (text, AES-ECB), `value` (numeric, OPE), `drop` (numeric, OPE), `variation` (numeric, OPE)
 - Matching performed entirely on ciphertext (broker never sees plaintext)
 - All notifications decrypted and verified offline by subscribers
 
@@ -73,6 +73,5 @@ AES-ECB deterministic encryption guarantees correct equality matching on ciphert
 
 ## Limitations
 
-1. **Date field**: Comparisons like `date <= "3.02.2022"` use AES-ECB ciphertext lexicographic comparison, which is **not order-preserving**. This means date-range constraints produce random results on the broker. A future improvement would move dates to OPE.
-2. **Publisher throughput**: Limited to ~370 pubs/sec due to protobuf serialization and Kafka producer overhead. This reduces the effective evaluation window.
-3. **Single Kafka partition**: Only `broker_0` consumes from Kafka; a multi-partition setup would increase throughput.
+1. **Publisher throughput**: Limited to ~370 pubs/sec due to protobuf serialization and Kafka producer overhead. This reduces the effective evaluation window.
+2. **Single Kafka partition**: Only `broker_0` consumes from Kafka; a multi-partition setup would increase throughput.

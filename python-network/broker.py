@@ -265,7 +265,6 @@ class BrokerNode:
                         "value": proto.value,
                         "drop": proto.drop,
                         "variation": proto.variation,
-                        "date": proto.date,
                         "_ts": proto._ts,
                     }
 

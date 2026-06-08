@@ -1,7 +1,6 @@
 services:
   kafka:
     image: apache/kafka:4.0.0
-    container_name: kafka
     ports:
       - "9092:9092"
     environment:
@@ -12,9 +11,4 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: true
-    volumes:
-      - kafka_data:/var/lib/kafka/data
-
-volumes:
-  kafka_data:
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1

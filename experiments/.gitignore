@@ -1,0 +1,4 @@
+__pycache__/
+*.log
+**/subscriptions.txt
+**/publications.txt

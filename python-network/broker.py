@@ -160,9 +160,27 @@ class BrokerNode:
     def _handle_subscription(self, message: Dict, client_socket: socket.socket):
         subscriber_id = message["subscriber_id"]
         raw_sub = message["subscription"]
+        is_failover = message.get("is_failover", False)
+        last_ts = message.get("last_ts", None)
 
         with self.lock:
             self.subscriber_sockets[subscriber_id] = client_socket
+
+        if is_failover:
+            subscription = self._subscription_from_raw(raw_sub)
+            with self.lock:
+                self._store_active_subscription(subscriber_id, subscription, self.broker_id)
+            self.logger.info(
+                "failover_subscribe subscriber_id=%s last_ts=%s (active set)", subscriber_id, last_ts
+            )
+            if last_ts is not None:
+                replay_thread = threading.Thread(
+                    target=self._replay_publications_to_client,
+                    args=(client_socket, subscription, last_ts, subscriber_id),
+                    daemon=True
+                )
+                replay_thread.start()
+            return
 
         target_broker = self._get_target_broker(raw_sub)
         self.logger.info(
@@ -170,7 +188,6 @@ class BrokerNode:
             subscriber_id,
             target_broker,
         )
-
         if target_broker == self.broker_id:
             subscription = self._subscription_from_raw(raw_sub)
             with self.lock:
@@ -202,6 +219,74 @@ class BrokerNode:
                     subscriber_id,
                     target_broker,
                 )
+
+    def _replay_publications_to_client(self, client_socket, subscription, last_ts, subscriber_id):
+        batch_size = 500
+        pubs_sent = 0
+        config = {
+            "bootstrap.servers": "localhost:9092",
+            "group.id": f"replay-{subscriber_id}-{int(time.time())}",
+            "auto.offset.reset": "earliest",
+            "enable.auto.commit": False,
+        }
+        consumer = Consumer(config)
+        
+        consumer.subscribe([KAFKA_TOPIC])
+        batch = []
+        
+        none_count = 0
+        max_none_count = 15
+
+        try:
+            while True:
+                msg = consumer.poll(0.2)
+                
+                if msg is None:
+                    none_count += 1
+                    if none_count >= max_none_count:
+                        if batch:
+                            self._send_replay_batch(client_socket, batch)
+                            batch = []
+                        break
+                    continue
+                
+                none_count = 0
+                
+                if msg.error():
+                    continue
+                    
+                raw_str = msg.value().decode("utf-8", errors="ignore")
+                proto = publication_pb2.Publication()
+                proto.ParseFromString(base64.b64decode(raw_str))
+                pub_dict = {
+                    "company": proto.company, "value": proto.value, "drop": proto.drop,
+                    "variation": proto.variation, "_ts": proto._ts
+                }
+                
+                if int(pub_dict["_ts"]) > int(last_ts):
+                    if self.matching_engine.matches(pub_dict, subscription):
+                        batch.append(pub_dict)
+                        if len(batch) >= batch_size:
+                            self._send_replay_batch(client_socket, batch)
+                            pubs_sent += len(batch)
+                            batch.clear()
+                            
+            self.logger.info("replay_complete subscriber_id=%s total=%d", subscriber_id, pubs_sent)
+        except Exception as e:
+            self.logger.error("replay_error subscriber_id=%s error=%s", subscriber_id, e)
+        finally:
+            consumer.close()
+
+    def _send_replay_batch(self, client_socket, batch):
+        for pub in batch:
+            try:
+                notification = json.dumps({"type": "match", "publication": pub}) + "\n"
+                
+                with self.lock:
+                    client_socket.sendall(notification.encode("utf-8"))
+                    
+            except Exception as e:
+                self.logger.warning("replay_send_failed _ts=%s error=%s", pub.get("_ts"), e)
 
     def _handle_register(self, message: Dict, client_socket: socket.socket):
         subscriber_id = message["subscriber_id"]
@@ -357,23 +442,48 @@ class BrokerNode:
                     return None
             return self.next_broker_socket
 
+    def _get_persistent_socket(self, target_bid: str, target_addr: tuple):
+        if not hasattr(self, 'forward_sockets'):
+            self.forward_sockets = {}
+        
+        with self.entry_broker_lock:
+            sock = self.forward_sockets.get(target_bid)
+            if sock is not None:
+                return sock
+            
+            try:
+                s = socket.socket()
+                s.settimeout(2)
+                s.connect(target_addr)
+                self.forward_sockets[target_bid] = s
+                return s
+            except Exception:
+                return None
+
     def _forward_publication(self, message: Dict):
-        if not self.next_broker:
-            return
+        sorted_brokers = sorted(self.all_brokers.keys())
         try:
-            sock = self._get_next_broker_socket()
-            if sock:
-                sock.sendall((json.dumps(message) + "\n").encode())
-                return
-        except Exception:
-            with self.next_broker_lock:
-                self.next_broker_socket = None
-            for bid, addr in self.all_brokers.items():
-                if addr == self.next_broker:
-                    if self.broker_status.get(bid, True):
-                        self.logger.warning("next_broker_unreachable broker_id=%s", bid)
-                        self._mark_broker_down(self.next_broker)
-                    break
+            my_index = sorted_brokers.index(self.broker_id)
+        except ValueError:
+            return
+
+        for i in range(my_index + 1, len(sorted_brokers)):
+            next_bid = sorted_brokers[i]
+            
+            if self.broker_status.get(next_bid, True):
+                target_addr = self.all_brokers[next_bid]
+                sock = self._get_persistent_socket(next_bid, target_addr)
+                
+                if sock:
+                    try:
+                        sock.sendall((json.dumps(message) + "\n").encode())
+                        return
+                    except Exception:
+                        with self.entry_broker_lock:
+                            self.forward_sockets.pop(next_bid, None)
+                        self._mark_broker_down(target_addr)
+                else:
+                    self._mark_broker_down(target_addr)
 
     def _get_entry_broker_socket(self, broker_id: str):
         with self.entry_broker_lock:
@@ -505,7 +615,7 @@ BROKER_ADDRESSES = {
 NEXT_BROKER = {
     "broker_0": ("localhost", 8002),
     "broker_1": ("localhost", 8003),
-    "broker_2": None,
+    "broker_2": ("localhost", 8001),
 }
 
 KAFKA_TOPIC = "raw-publications"

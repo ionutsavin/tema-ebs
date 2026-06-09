@@ -1,7 +1,3 @@
-"""
-Consistent Hashing for distributed subscription routing across brokers
-"""
-
 import hashlib
 from typing import List
 

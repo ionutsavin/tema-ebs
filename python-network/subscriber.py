@@ -25,35 +25,61 @@ class Subscriber:
         self.broker_addresses = broker_addresses
         self.logger = logger
 
-        self.primary_broker = random.choice(list(broker_addresses.keys()))
+        self.brokers_list = list(broker_addresses.keys())
+        self.broker_idx = random.randint(0, len(self.brokers_list) - 1)
         self.socket = None
+        self.is_failover = False
+        self.last_ts = 0
 
         self.verify_matches = verify_matches
         self.raw_subs = []
+        self.encrypted_subs = []
         self.matching_engine = MatchingEngine()
         self._verified = 0
         self._failed = 0
         self._verify_lock = threading.Lock()
 
     def connect_to_broker(self):
-        broker_id = self.primary_broker
-        host, port = self.broker_addresses[broker_id]
-        try:
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.connect((host, port))
+        attempts = 0
+        while True:
+            broker_id = self.brokers_list[self.broker_idx]
+            host, port = self.broker_addresses[broker_id]
+            try:
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.socket.connect((host, port))
+                
+                register_msg = {
+                    "type": "register",
+                    "subscriber_id": self.subscriber_id,
+                    "is_failover": self.is_failover,
+                    "last_ts": self.last_ts
+                }
+                self.socket.sendall((json.dumps(register_msg) + "\n").encode("utf-8"))
 
-            register_msg = {"type": "register", "subscriber_id": self.subscriber_id}
-            self.socket.sendall((json.dumps(register_msg) + "\n").encode("utf-8"))
+                if self.is_failover:
+                    for sub in self.encrypted_subs:
+                        subscribe_msg = {
+                            "type": "subscribe",
+                            "subscriber_id": self.subscriber_id,
+                            "subscription": sub,
+                            "is_failover": self.is_failover,
+                            "last_ts": self.last_ts
+                        }
+                        self.socket.sendall((json.dumps(subscribe_msg) + "\n").encode("utf-8"))
 
-            threading.Thread(
-                target=self._listen_for_matches, args=(broker_id, self.socket), daemon=True
-            ).start()
-            self.logger.info(
-                "connected broker_id=%s host=%s port=%d",
-                broker_id, host, port,
-            )
-        except Exception:
-            self.logger.error("connect_failed broker_id=%s", broker_id)
+                self.logger.info("Connected to %s (failover=%s), last_ts=%s", broker_id, self.is_failover, self.last_ts)
+                
+                threading.Thread(
+                    target=self._listen_for_matches, args=(broker_id, self.socket), daemon=True
+                ).start()
+                break
+
+            except Exception as e:
+                self.logger.warning("Connection failed to %s: %s", broker_id, e)
+                time.sleep(1)
+                attempts += 1
+                self.broker_idx = (self.broker_idx + 1) % len(self.brokers_list)
+                self.is_failover = True
 
     def load_and_send_subscriptions(self, filepath: str):
         sent_count = 0
@@ -75,10 +101,14 @@ class Subscriber:
                     if not encrypted_sub:
                         continue
 
+                    self.encrypted_subs.append(encrypted_sub)
+
                     message = {
                         "type": "subscribe",
                         "subscriber_id": self.subscriber_id,
                         "subscription": encrypted_sub,
+                        "is_failover": False,
+                        "last_ts": 0
                     }
                     if self.socket:
                         self.socket.sendall(
@@ -91,7 +121,7 @@ class Subscriber:
 
             self.logger.info(
                 "subs_sent count=%d broker_id=%s",
-                sent_count, self.primary_broker,
+                sent_count, self.brokers_list[self.broker_idx],
             )
         except FileNotFoundError:
             self.logger.error("subscriptions_file_not_found path=%s", filepath)
@@ -110,14 +140,12 @@ class Subscriber:
             while True:
                 data = sock.recv(65536).decode("utf-8")
                 if not data:
-                    break
-
+                    raise ConnectionError("EOF or disconnect from broker.")
                 buffer += data
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
                     if not line.strip():
                         continue
-
                     try:
                         msg = json.loads(line)
                     except json.JSONDecodeError:
@@ -125,13 +153,20 @@ class Subscriber:
                     if msg.get("type") == "match":
                         pub = msg["publication"]
                         ts = pub.get("_ts")
-
+                        if ts is not None:
+                            self.last_ts = max(self.last_ts, int(ts))
                         self._log_match(ts, broker_id)
-
                         if self.verify_matches:
                             self._verify_match(pub, broker_id)
         except Exception as e:
-            self.logger.warning("listen_error broker_id=%s error=%s", broker_id, e)
+            self.logger.warning("Lost connection to %s: %s", broker_id, e)
+            try:
+                sock.close()
+            except Exception:
+                pass
+            self.is_failover = True
+            self.broker_idx = (self.broker_idx + 1) % len(self.brokers_list)
+            self.connect_to_broker()
 
     def _verify_match(self, encrypted_pub: dict, broker_id: str):
         plain_pub = decrypt_publication(encrypted_pub)

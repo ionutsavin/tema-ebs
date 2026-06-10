@@ -45,6 +45,8 @@ class BrokerNode:
         # Direct TCP sockets to subscribers that connected to THIS broker
         self.subscriber_sockets = {}
         self.matching_engine = MatchingEngine()
+        # Fast-path index: (field, value) -> {subscriber_id: entry_broker}
+        self._eq_index: Dict[str, Dict[str, str]] = {}
 
         self.server_socket = None
         self.running = True
@@ -139,6 +141,19 @@ class BrokerNode:
                 "entry_broker": entry_broker,
             }
         )
+        self._add_to_eq_index(subscriber_id, subscription, entry_broker)
+
+    def _add_to_eq_index(
+        self, subscriber_id: str, subscription: dict, entry_broker: str
+    ):
+        for field, condition in subscription.items():
+            if isinstance(condition, tuple) and len(condition) == 2:
+                op, value = condition
+                if op == "=":
+                    key = f"{field}:{value}"
+                    if key not in self._eq_index:
+                        self._eq_index[key] = {}
+                    self._eq_index[key][subscriber_id] = entry_broker
 
     def _store_replicated_subscription(
         self,
@@ -169,15 +184,19 @@ class BrokerNode:
         if is_failover:
             subscription = self._subscription_from_raw(raw_sub)
             with self.lock:
-                self._store_active_subscription(subscriber_id, subscription, self.broker_id)
+                self._store_active_subscription(
+                    subscriber_id, subscription, self.broker_id
+                )
             self.logger.info(
-                "failover_subscribe subscriber_id=%s last_ts=%s (active set)", subscriber_id, last_ts
+                "failover_subscribe subscriber_id=%s last_ts=%s (active set)",
+                subscriber_id,
+                last_ts,
             )
             if last_ts is not None:
                 replay_thread = threading.Thread(
                     target=self._replay_publications_to_client,
                     args=(client_socket, subscription, last_ts, subscriber_id),
-                    daemon=True
+                    daemon=True,
                 )
                 replay_thread.start()
             return
@@ -220,7 +239,9 @@ class BrokerNode:
                     target_broker,
                 )
 
-    def _replay_publications_to_client(self, client_socket, subscription, last_ts, subscriber_id):
+    def _replay_publications_to_client(
+        self, client_socket, subscription, last_ts, subscriber_id
+    ):
         batch_size = 500
         pubs_sent = 0
         config = {
@@ -230,17 +251,17 @@ class BrokerNode:
             "enable.auto.commit": False,
         }
         consumer = Consumer(config)
-        
+
         consumer.subscribe([KAFKA_TOPIC])
         batch = []
-        
+
         none_count = 0
         max_none_count = 15
 
         try:
             while True:
                 msg = consumer.poll(0.2)
-                
+
                 if msg is None:
                     none_count += 1
                     if none_count >= max_none_count:
@@ -249,20 +270,23 @@ class BrokerNode:
                             batch = []
                         break
                     continue
-                
+
                 none_count = 0
-                
+
                 if msg.error():
                     continue
-                    
+
                 raw_str = msg.value().decode("utf-8", errors="ignore")
                 proto = publication_pb2.Publication()
                 proto.ParseFromString(base64.b64decode(raw_str))
                 pub_dict = {
-                    "company": proto.company, "value": proto.value, "drop": proto.drop,
-                    "variation": proto.variation, "_ts": proto._ts
+                    "company": proto.company,
+                    "value": proto.value,
+                    "drop": proto.drop,
+                    "variation": proto.variation,
+                    "_ts": proto._ts,
                 }
-                
+
                 if int(pub_dict["_ts"]) > int(last_ts):
                     if self.matching_engine.matches(pub_dict, subscription):
                         batch.append(pub_dict)
@@ -270,10 +294,14 @@ class BrokerNode:
                             self._send_replay_batch(client_socket, batch)
                             pubs_sent += len(batch)
                             batch.clear()
-                            
-            self.logger.info("replay_complete subscriber_id=%s total=%d", subscriber_id, pubs_sent)
+
+            self.logger.info(
+                "replay_complete subscriber_id=%s total=%d", subscriber_id, pubs_sent
+            )
         except Exception as e:
-            self.logger.error("replay_error subscriber_id=%s error=%s", subscriber_id, e)
+            self.logger.error(
+                "replay_error subscriber_id=%s error=%s", subscriber_id, e
+            )
         finally:
             consumer.close()
 
@@ -281,12 +309,14 @@ class BrokerNode:
         for pub in batch:
             try:
                 notification = json.dumps({"type": "match", "publication": pub}) + "\n"
-                
+
                 with self.lock:
                     client_socket.sendall(notification.encode("utf-8"))
-                    
+
             except Exception as e:
-                self.logger.warning("replay_send_failed _ts=%s error=%s", pub.get("_ts"), e)
+                self.logger.warning(
+                    "replay_send_failed _ts=%s error=%s", pub.get("_ts"), e
+                )
 
     def _handle_register(self, message: Dict, client_socket: socket.socket):
         subscriber_id = message["subscriber_id"]
@@ -366,9 +396,25 @@ class BrokerNode:
 
         matches_to_forward = []
         local_matches = 0
+        notified: set[str] = set()
 
         with self.lock:
+            for field, pub_value in pub_data.items():
+                key = f"{field}:{pub_value}"
+                if key in self._eq_index:
+                    for sub_id, entry_broker in self._eq_index[key].items():
+                        if sub_id in notified:
+                            continue
+                        notified.add(sub_id)
+                        if entry_broker == self.broker_id:
+                            self._notify_subscriber(sub_id, pub_data)
+                            local_matches += 1
+                        else:
+                            matches_to_forward.append((entry_broker, sub_id, pub_data))
+
             for sub_id, subs in self.subscriptions.items():
+                if sub_id in notified:
+                    continue
                 for sub_entry in subs:
                     sub = sub_entry["subscription"]
                     entry_broker = sub_entry["entry_broker"]
@@ -443,14 +489,14 @@ class BrokerNode:
             return self.next_broker_socket
 
     def _get_persistent_socket(self, target_bid: str, target_addr: tuple):
-        if not hasattr(self, 'forward_sockets'):
+        if not hasattr(self, "forward_sockets"):
             self.forward_sockets = {}
-        
+
         with self.entry_broker_lock:
             sock = self.forward_sockets.get(target_bid)
             if sock is not None:
                 return sock
-            
+
             try:
                 s = socket.socket()
                 s.settimeout(2)
@@ -469,11 +515,11 @@ class BrokerNode:
 
         for i in range(my_index + 1, len(sorted_brokers)):
             next_bid = sorted_brokers[i]
-            
+
             if self.broker_status.get(next_bid, True):
                 target_addr = self.all_brokers[next_bid]
                 sock = self._get_persistent_socket(next_bid, target_addr)
-                
+
                 if sock:
                     try:
                         sock.sendall((json.dumps(message) + "\n").encode())

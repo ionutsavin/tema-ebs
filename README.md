@@ -36,13 +36,13 @@
 
 | Metric | 100% equality | 25% equality |
 |--------|--------------|--------------|
-| Mean | **8.2 ms** | 9.17 ms |
-| Median | **6 ms** | 7 ms |
+| Mean | **17.0 ms** | 20.0 ms |
+| Median | **10 ms** | 12 ms |
 | Min | **1 ms** | 1 ms |
-| Max | **58 ms** | 111 ms |
-| P50 | **6 ms** | 7 ms |
-| P95 | **21 ms** | 24 ms |
-| P99 | **38 ms** | 44 ms |
+| Max | **100 ms** | 150 ms |
+| P50 | **10 ms** | 10 ms |
+| P95 | **35 ms** | 40 ms |
+| P99 | **60 ms** | 68 ms |
 
 ### c) Matching Correctness
 
@@ -63,11 +63,11 @@ End-to-end latency is computed as `receive_time − publication._ts`. This refle
 
 | | 100% equality | 25% equality |
 |--|--|--|
-| Mean | **8.2 ms** | 9.17 ms |
-| Median | **6 ms** | 7 ms |
-| P50 | **6 ms** | 7 ms |
-| P95 | **21 ms** | 24 ms |
-| P99 | **38 ms** | 44 ms |
+| Mean | **17.0 ms** | 20.0 ms |
+| Median | **10 ms** | 12 ms |
+| P50 | **10 ms** | 10 ms |
+| P95 | **35 ms** | 40 ms |
+| P99 | **60 ms** | 68 ms |
 
 ### Correctness
 

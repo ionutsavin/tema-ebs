@@ -1,15 +1,3 @@
-"""
-Non-blocking structured logging setup using stdlib logging.handlers.QueueListener.
-
-Usage:
-    from system_logger import setup_logger, stop_logger
-    logger, listener = setup_logger("broker_0", "/tmp/broker_0.log")  # file
-    logger, listener = setup_logger("broker_0")                       # console
-    logger, listener = setup_logger("broker_0", disable=True)         # silent
-    logger.info("event=pub_received company=%s", company)
-    stop_logger(listener)
-"""
-
 import logging
 import logging.handlers
 import queue
@@ -26,14 +14,7 @@ def setup_logger(
     disable: bool = False,
     level: int = logging.INFO,
 ) -> Tuple[logging.Logger, Listener]:
-    """
-    Create a logger that enqueues records to a background thread,
-    so the hot path never blocks on I/O.
 
-    - log_path set: write to file
-    - disable=True: discard all log records
-    - otherwise: write to stdout
-    """
     logger = logging.getLogger(name)
     logger.handlers = []
     logger.propagate = False
@@ -57,7 +38,9 @@ def setup_logger(
 
     handler.setFormatter(formatter)
 
-    listener = logging.handlers.QueueListener(log_queue, handler, respect_handler_level=True)
+    listener = logging.handlers.QueueListener(
+        log_queue, handler, respect_handler_level=True
+    )
     listener.start()
 
     logger.addHandler(logging.handlers.QueueHandler(log_queue))

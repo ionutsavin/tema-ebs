@@ -32,16 +32,17 @@
 
 ### b) End-to-End Latency
 
-Measured on match notifications with latency ≤ 10s (excludes backlog-inflated outliers from the previous metric).
+
 
 | Metric | 100% equality | 25% equality |
 |--------|--------------|--------------|
-| Mean | 5.55 ms | 6.28 ms |
-| Min | 0 ms | 1 ms |
-| Max | 33 ms | 87 ms |
-| P50 | 6 ms | 6 ms |
-| P95 | 8 ms | 9 ms |
-| P99 | 9 ms | 10 ms |
+| Mean | **8.2 ms** | 9.17 ms |
+| Median | **6 ms** | 7 ms |
+| Min | **1 ms** | 1 ms |
+| Max | **58 ms** | 111 ms |
+| P50 | **6 ms** | 7 ms |
+| P95 | **21 ms** | 24 ms |
+| P99 | **38 ms** | 44 ms |
 
 ### c) Matching Correctness
 
@@ -59,11 +60,14 @@ Every match notification was decrypted by the subscriber and verified against th
 
 End-to-end latency is computed as `receive_time − publication._ts`. This reflects true in-feed delivery; matches processed from backlog after longer delays are excluded.
 
+
 | | 100% equality | 25% equality |
 |--|--|--|
-| Mean | 5.55 ms | 6.28 ms |
-| P50 | 6 ms | 6 ms |
-| P99 | 9 ms | 10 ms |
+| Mean | **8.2 ms** | 9.17 ms |
+| Median | **6 ms** | 7 ms |
+| P50 | **6 ms** | 7 ms |
+| P95 | **21 ms** | 24 ms |
+| P99 | **38 ms** | 44 ms |
 
 ### Correctness
 

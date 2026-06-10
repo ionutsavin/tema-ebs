@@ -22,11 +22,13 @@ def load_matches(log_path: str) -> list[dict]:
         for line in f:
             match = MATCH_RE.search(line)
             if match:
-                rows.append({
-                    "ts": match.group(1),
-                    "latency_ms": int(match.group(2)),
-                    "broker_id": match.group(3),
-                })
+                rows.append(
+                    {
+                        "ts": match.group(1),
+                        "latency_ms": int(match.group(2)),
+                        "broker_id": match.group(3),
+                    }
+                )
     return rows
 
 
@@ -57,9 +59,13 @@ def load_publisher_metrics(scenario_dir: str) -> dict:
 def _latency_stats(latencies: list[int]) -> dict:
     if not latencies:
         return {}
-    sorted_lat = sorted(latencies)
+    filtered = [lat for lat in latencies if lat > 0]
+    if not filtered:
+        return {}
+    sorted_lat = sorted(filtered)
     return {
         "mean": statistics.mean(sorted_lat),
+        "median": statistics.median(sorted_lat),
         "min": min(sorted_lat),
         "max": max(sorted_lat),
         "p50": sorted_lat[len(sorted_lat) // 2],
@@ -130,11 +136,12 @@ def print_results(results: dict) -> None:
 
     latency = results["latency"]
     if latency:
-        print(f"\n  b) Latență end-to-end (ms, matches cu latency ≤ {IN_WINDOW_LATENCY_MS} ms):")
+        print(f"\n  b) Latență end-to-end:")
         print(f"     Esantion: {latency['count']} notificări")
-        print(f"     Medie: {latency['mean']:.2f}")
-        print(f"     Minim: {latency['min']}")
-        print(f"     Maxim: {latency['max']}")
+        print(f"     Medie:   {latency['mean']:.2f}")
+        print(f"     Mediană: {latency['median']:.2f}")
+        print(f"     Minim:   {latency['min']}")
+        print(f"     Maxim:   {latency['max']}")
         print(f"     P50:   {latency['p50']}")
         print(f"     P95:   {latency['p95']}")
         print(f"     P99:   {latency['p99']}")
